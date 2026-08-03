@@ -413,6 +413,8 @@ export class GameScene extends Phaser.Scene {
     return this.grid.getSameSecondaryCluster(col, row).length >= CONFIG.SECONDARY_CLEAR_MIN;
   }
 
+  private clearAnimSafetyTimer: Phaser.Time.TimerEvent | null = null;
+
   private tryDoubleTapClear(col: number, row: number): boolean {
     const cluster = this.grid.getSameSecondaryCluster(col, row);
     if (cluster.length < CONFIG.SECONDARY_CLEAR_MIN || this.busy) return false;
@@ -443,6 +445,8 @@ export class GameScene extends Phaser.Scene {
       return true;
     }
 
+    this.startClearAnimSafety();
+
     this.playClusterExplode(cluster, () => {
       const { moves, spawns } = this.grid.clearClusterWithGravity(cluster);
       this.playGravityDrop(moves, spawns, () => {
@@ -453,7 +457,20 @@ export class GameScene extends Phaser.Scene {
     return true;
   }
 
+  private startClearAnimSafety(): void {
+    this.clearAnimSafetyTimer?.destroy();
+    const maxMs = 4000;
+    this.clearAnimSafetyTimer = this.time.delayedCall(maxMs, () => {
+      if (!this.busy) return;
+      this.tweens.killAll();
+      this.relayoutTiles();
+      this.finishClear();
+    });
+  }
+
   private finishClear(): void {
+    this.clearAnimSafetyTimer?.destroy();
+    this.clearAnimSafetyTimer = null;
     this.busy = false;
     if (this.grid.isGameOver()) this.endGame('Grid full!');
   }
@@ -646,6 +663,7 @@ export class GameScene extends Phaser.Scene {
   private resetComboIdle(): void {
     if (this.comboIdleTimer) this.comboIdleTimer.destroy();
     this.comboIdleTimer = this.time.delayedCall(CONFIG.COMBO_IDLE_MS, () => {
+      if (this.busy || this.paused) return;
       this.scoring.resetCombo();
       this.refreshGrid();
     });

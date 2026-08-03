@@ -66,6 +66,29 @@ describe('Grid', () => {
     expect(grid.getCell(2, 5)).toMatch(/^(red|blue|yellow)$/);
   });
 
+  it('does not bridge two pairs through diagonal-only contact', () => {
+    const grid = new Grid();
+    grid.cells = Array.from({ length: 8 }, () => Array.from({ length: 6 }, () => 'red'));
+    grid.cells[0][0] = 'green';
+    grid.cells[0][1] = 'green';
+    grid.cells[2][1] = 'green';
+    grid.cells[2][2] = 'green';
+
+    expect(grid.getSameSecondaryCluster(0, 0)).toHaveLength(2);
+    expect(grid.getSameSecondaryCluster(1, 2)).toHaveLength(2);
+  });
+
+  it('includes a solid 2x2 block as one cluster of four', () => {
+    const grid = new Grid();
+    grid.cells = Array.from({ length: 8 }, () => Array.from({ length: 6 }, () => 'red'));
+    grid.cells[2][1] = 'green';
+    grid.cells[2][2] = 'green';
+    grid.cells[3][1] = 'green';
+    grid.cells[3][2] = 'green';
+
+    expect(grid.getSameSecondaryCluster(1, 2)).toHaveLength(4);
+  });
+
   it('clears a 2x2 cluster of four and refills with primaries', () => {
     const grid = new Grid();
     grid.cells = Array.from({ length: 8 }, () => Array.from({ length: 6 }, () => 'red'));

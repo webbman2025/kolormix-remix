@@ -88,7 +88,7 @@ export class Grid {
     this.fillEmpty();
   }
 
-  /** Connected tiles of the same secondary color (8-direction). */
+  /** Connected tiles of the same secondary color (orthogonal only — no diagonal bridge). */
   getSameSecondaryCluster(col: number, row: number): Position[] {
     const start = this.getCell(col, row);
     if (!start || !isSecondary(start)) return [];
@@ -109,14 +109,16 @@ export class Grid {
       visited.add(key);
       cluster.push(pos);
 
-      for (let dr = -1; dr <= 1; dr++) {
-        for (let dc = -1; dc <= 1; dc++) {
-          if (dc === 0 && dr === 0) continue;
-          const next = { col: pos.col + dc, row: pos.row + dr };
-          if (!this.inBounds(next.col, next.row)) continue;
-          const nextKey = `${next.col},${next.row}`;
-          if (!visited.has(nextKey)) queue.push(next);
-        }
+      const neighbors: Position[] = [
+        { col: pos.col + 1, row: pos.row },
+        { col: pos.col - 1, row: pos.row },
+        { col: pos.col, row: pos.row + 1 },
+        { col: pos.col, row: pos.row - 1 },
+      ];
+      for (const next of neighbors) {
+        if (!this.inBounds(next.col, next.row)) continue;
+        const nextKey = `${next.col},${next.row}`;
+        if (!visited.has(nextKey)) queue.push(next);
       }
     }
 

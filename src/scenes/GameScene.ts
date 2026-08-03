@@ -33,12 +33,13 @@ import {
   paintGlossyTile,
   type GlossyTileParts,
 } from '../ui/GlossyTile';
+import { spawnExplodeBurst, tweenTileExplode } from '../ui/ClearEffects';
 import {
   getPersonalBest,
   saveScore,
   updatePersonalBest,
 } from '../storage/Storage';
-import type { Position, TileColor } from '../types';
+import type { Position, TileColor, TileMove, TileSpawn } from '../types';
 
 interface PointerStart {
   col: number;
@@ -208,6 +209,8 @@ export class GameScene extends Phaser.Scene {
 
   private positionTile(parts: GlossyTileParts, x: number, y: number, size: number): void {
     this.tweens.killTweensOf(parts.container);
+    parts.container.setAlpha(1);
+    parts.container.setScale(1);
     parts.container.setData('anchorX', x);
     parts.container.setData('anchorY', y);
     parts.container.setPosition(x, y);
@@ -419,7 +422,7 @@ export class GameScene extends Phaser.Scene {
     this.lastTap = null;
     this.selected = null;
     this.snapAllTilesToGrid();
-    this.grid.clearSecondaryCluster(cluster);
+
     const bonus = this.scoring.recordClear();
     this.scoreDisplay.setScore(this.scoring.score);
     announce(`Cleared ${cluster.length} tiles! Bonus ${bonus} points.`, true);
@@ -433,15 +436,123 @@ export class GameScene extends Phaser.Scene {
       this.layout.uiScale,
     );
 
-    this.refreshGrid();
+    if (this.contrast.isReducedMotion()) {
+      this.grid.clearClusterWithGravity(cluster);
+      this.relayoutTiles();
+      this.finishClear();
+      return true;
+    }
 
-    const duration = this.contrast.isReducedMotion() ? 50 : 250;
-    this.time.delayedCall(duration, () => {
-      this.snapAllTilesToGrid();
-      this.busy = false;
-      if (this.grid.isGameOver()) this.endGame('Grid full!');
+    this.playClusterExplode(cluster, () => {
+      const { moves, spawns } = this.grid.clearClusterWithGravity(cluster);
+      this.playGravityDrop(moves, spawns, () => {
+        this.relayoutTiles();
+        this.finishClear();
+      });
     });
     return true;
+  }
+
+  private finishClear(): void {
+    this.busy = false;
+    if (this.grid.isGameOver()) this.endGame('Grid full!');
+  }
+
+  private playClusterExplode(cluster: Position[], onComplete: () => void): void {
+    if (cluster.length === 0) {
+      onComplete();
+      return;
+    }
+
+    this.cameras.main.shake(140, 0.004 * this.layout.uiScale);
+    let pending = cluster.length;
+
+    for (const { col, row } of cluster) {
+      const parts = this.tileSprites[row][col];
+      const color = this.grid.getCell(col, row);
+      const pos = this.getTilePosition(col, row);
+      spawnExplodeBurst(this, pos.x, pos.y, color, this.layout.uiScale);
+
+      tweenTileExplode(this, parts.container, () => {
+        pending--;
+        if (pending === 0) onComplete();
+      });
+    }
+  }
+
+  private playGravityDrop(
+    moves: TileMove[],
+    spawns: TileSpawn[],
+    onComplete: () => void,
+  ): void {
+    const total = moves.length + spawns.length;
+    if (total === 0) {
+      onComplete();
+      return;
+    }
+
+    let pending = total;
+    const done = () => {
+      pending--;
+      if (pending === 0) onComplete();
+    };
+
+    const { tileSize, tileGap, uiScale } = this.layout;
+    const step = tileSize + tileGap;
+    const dropDuration = Math.round(380 * uiScale);
+    const stagger = Math.round(36 * uiScale);
+
+    const spawnKeys = new Set(spawns.map((s) => `${s.col},${s.row}`));
+
+    // Hide emptied source slots (unless that slot also receives a spawn).
+    for (const move of moves) {
+      const srcKey = `${move.col},${move.fromRow}`;
+      if (!spawnKeys.has(srcKey)) {
+        this.tileSprites[move.fromRow][move.col].container.setAlpha(0);
+      }
+    }
+
+    // Animate into each destination slot — avoids reusing the same sprite for move-out + spawn-in.
+    for (const move of moves) {
+      const parts = this.tileSprites[move.toRow][move.col];
+      const fromPos = this.getTilePosition(move.col, move.fromRow);
+      const toPos = this.getTilePosition(move.col, move.toRow);
+
+      this.paintCell(parts, move.col, move.toRow);
+      parts.container.setPosition(fromPos.x, fromPos.y);
+      parts.container.setAlpha(1);
+      parts.container.setScale(1);
+
+      this.tweens.add({
+        targets: parts.container,
+        x: toPos.x,
+        y: toPos.y,
+        delay: move.toRow * stagger,
+        duration: dropDuration,
+        ease: 'Bounce.easeOut',
+        onComplete: done,
+      });
+    }
+
+    for (const spawn of spawns) {
+      const parts = this.tileSprites[spawn.row][spawn.col];
+      const target = this.getTilePosition(spawn.col, spawn.row);
+      const startY = target.y - step * (spawn.row + 1.5);
+
+      this.paintCell(parts, spawn.col, spawn.row);
+      parts.container.setPosition(target.x, startY);
+      parts.container.setAlpha(1);
+      parts.container.setScale(1);
+
+      this.tweens.add({
+        targets: parts.container,
+        y: target.y,
+        delay: spawn.row * stagger,
+        duration: dropDuration,
+        ease: 'Bounce.easeOut',
+        onComplete: done,
+      });
+    }
   }
 
   private tryMerge(from: Position, to: Position): boolean {

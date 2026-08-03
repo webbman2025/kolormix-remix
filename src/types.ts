@@ -31,3 +31,22 @@ export interface Position {
   col: number;
   row: number;
 }
+
+/** A tile sliding down within its column after a clear. */
+export interface TileMove {
+  col: number;
+  fromRow: number;
+  toRow: number;
+}
+
+/** A new primary spawned above the column and dropped in. */
+export interface TileSpawn {
+  col: number;
+  row: number;
+  color: TileColor;
+}
+
+export interface GravityResult {
+  moves: TileMove[];
+  spawns: TileSpawn[];
+}

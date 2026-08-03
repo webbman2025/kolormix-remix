@@ -43,30 +43,32 @@ describe('Grid', () => {
 
   it('finds same-color secondary clusters for double-tap clear', () => {
     const grid = new Grid();
-    grid.cells = Array.from({ length: 8 }, () => Array.from({ length: 6 }, () => null));
+    grid.cells = Array.from({ length: 8 }, () => Array.from({ length: 6 }, () => 'red'));
     grid.cells[1][1] = 'purple';
-    grid.cells[1][4] = 'green';
+    grid.cells[4][1] = 'green';
     grid.cells[5][0] = 'orange';
     grid.cells[5][1] = 'orange';
     grid.cells[5][2] = 'orange';
 
     expect(grid.getSameSecondaryCluster(1, 1)).toHaveLength(1);
-    expect(grid.getSameSecondaryCluster(4, 1)).toHaveLength(1);
+    expect(grid.getSameSecondaryCluster(1, 4)).toHaveLength(1);
     expect(grid.getSameSecondaryCluster(1, 5)).toHaveLength(3);
 
     const cluster = grid.getSameSecondaryCluster(1, 5);
     expect(cluster).toHaveLength(3);
 
     grid.clearSecondaryCluster(cluster);
-    expect(grid.getCell(1, 1)).toBe('purple');
-    expect(grid.getCell(1, 5)).toBeNull();
-    expect(grid.getCell(2, 5)).toBeNull();
-    expect(grid.getCell(3, 5)).toBeNull();
+    const col1 = Array.from({ length: 8 }, (_, row) => grid.getCell(1, row));
+    expect(col1).toContain('purple');
+    expect(col1).toContain('green');
+    expect(col1).not.toContain('orange');
+    expect(grid.getCell(0, 5)).toMatch(/^(red|blue|yellow)$/);
+    expect(grid.getCell(2, 5)).toMatch(/^(red|blue|yellow)$/);
   });
 
-  it('clears a 2x2 cluster of four without refilling', () => {
+  it('clears a 2x2 cluster of four and refills with primaries', () => {
     const grid = new Grid();
-    grid.cells = Array.from({ length: 8 }, () => Array.from({ length: 6 }, () => null));
+    grid.cells = Array.from({ length: 8 }, () => Array.from({ length: 6 }, () => 'red'));
     grid.cells[2][1] = 'green';
     grid.cells[2][2] = 'green';
     grid.cells[3][1] = 'green';
@@ -75,11 +77,61 @@ describe('Grid', () => {
     const cluster = grid.getSameSecondaryCluster(1, 2);
     expect(cluster).toHaveLength(4);
 
-    grid.clearSecondaryCluster(cluster);
-    expect(grid.getCell(1, 2)).toBeNull();
-    expect(grid.getCell(2, 2)).toBeNull();
-    expect(grid.getCell(1, 3)).toBeNull();
-    expect(grid.getCell(2, 3)).toBeNull();
+    const { spawns } = grid.clearSecondaryCluster(cluster);
+    expect(spawns).toHaveLength(4);
+    for (let row = 0; row < 8; row++) {
+      expect(grid.getCell(1, row)).not.toBeNull();
+      expect(grid.getCell(2, row)).not.toBeNull();
+    }
+    expect(grid.getCell(1, 2)).not.toBe('green');
+    expect(grid.getCell(2, 3)).not.toBe('green');
+  });
+
+  it('shifts top tiles down when clearing a gap below them in the same column', () => {
+    const grid = new Grid();
+    grid.cells = Array.from({ length: 8 }, () => Array.from({ length: 6 }, () => 'red'));
+    grid.cells[2][1] = 'green';
+    grid.cells[3][1] = 'green';
+
+    const { moves, spawns } = grid.clearClusterWithGravity([
+      { col: 1, row: 2 },
+      { col: 1, row: 3 },
+    ]);
+
+    expect(spawns).toHaveLength(2);
+    expect(moves).toEqual(
+      expect.arrayContaining([
+        { col: 1, fromRow: 0, toRow: 2 },
+        { col: 1, fromRow: 1, toRow: 3 },
+      ]),
+    );
+    expect(spawns.some((s) => s.col === 1 && s.row === 0)).toBe(true);
+    expect(spawns.some((s) => s.col === 1 && s.row === 1)).toBe(true);
+    expect(grid.getCell(1, 2)).toBe('red');
+    expect(grid.getCell(1, 3)).toBe('red');
+  });
+
+  it('applies column gravity with spawns at top and tiles falling down', () => {
+    const grid = new Grid();
+    grid.cells = Array.from({ length: 8 }, () => Array.from({ length: 6 }, () => 'red'));
+    grid.cells[0][0] = 'blue';
+    grid.cells[1][0] = 'yellow';
+    grid.cells[2][0] = 'green';
+    grid.cells[3][0] = 'green';
+    grid.cells[4][0] = 'green';
+
+    const cluster = grid.getSameSecondaryCluster(0, 2);
+    expect(cluster).toHaveLength(3);
+
+    const { moves, spawns } = grid.clearClusterWithGravity(cluster);
+
+    expect(spawns).toHaveLength(3);
+    expect(spawns.every((s) => s.col === 0)).toBe(true);
+    expect(moves.some((m) => m.col === 0 && m.fromRow === 0 && m.toRow === 3)).toBe(true);
+    expect(moves.some((m) => m.col === 0 && m.fromRow === 1 && m.toRow === 4)).toBe(true);
+    expect(grid.getCell(0, 0)).toMatch(/^(red|blue|yellow)$/);
+    expect(grid.getCell(0, 3)).toBe('blue');
+    expect(grid.getCell(0, 4)).toBe('yellow');
   });
 });
 

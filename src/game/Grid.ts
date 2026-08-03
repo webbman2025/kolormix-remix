@@ -1,6 +1,6 @@
 import { CONFIG } from '../config';
 import { canMerge, isSecondary, merge, SPAWN_COLORS } from './ColorMixer';
-import type { Position, TileColor } from '../types';
+import type { GravityResult, Position, TileColor, TileMove, TileSpawn } from '../types';
 
 export class Grid {
   readonly cols = CONFIG.GRID_COLS;
@@ -130,9 +130,59 @@ export class Grid {
     if (refill) this.fillEmpty();
   }
 
-  /** Remove a connected same-color secondary cluster without spawning replacements. */
-  clearSecondaryCluster(positions: Position[]): void {
-    this.removeTiles(positions, false);
+  /** Remove a connected same-color secondary cluster, apply column gravity, spawn primaries at top. */
+  clearSecondaryCluster(positions: Position[]): GravityResult {
+    return this.clearClusterWithGravity(positions);
+  }
+
+  clearClusterWithGravity(positions: Position[]): GravityResult {
+    for (const { col, row } of positions) {
+      if (this.inBounds(col, row)) this.cells[row][col] = null;
+    }
+
+    const moves: TileMove[] = [];
+    const spawns: TileSpawn[] = [];
+    const affectedCols = new Set(positions.map((p) => p.col));
+
+    for (const col of affectedCols) {
+      const remaining: TileColor[] = [];
+      const fromRows: number[] = [];
+
+      for (let row = 0; row < this.rows; row++) {
+        const color = this.cells[row][col];
+        if (color !== null) {
+          remaining.push(color);
+          fromRows.push(row);
+        }
+      }
+
+      const spawnCount = this.rows - remaining.length;
+      const columnSpawns: TileSpawn[] = [];
+
+      let destRow = spawnCount;
+      for (let i = 0; i < remaining.length; i++) {
+        const fromRow = fromRows[i];
+        if (fromRow !== destRow) {
+          moves.push({ col, fromRow, toRow: destRow });
+        }
+        destRow++;
+      }
+
+      for (let row = 0; row < spawnCount; row++) {
+        const color = this.takeFromQueue();
+        columnSpawns.push({ col, row, color });
+        spawns.push({ col, row, color });
+      }
+
+      for (let row = 0; row < spawnCount; row++) {
+        this.cells[row][col] = columnSpawns[row].color;
+      }
+      for (let i = 0; i < remaining.length; i++) {
+        this.cells[spawnCount + i][col] = remaining[i];
+      }
+    }
+
+    return { moves, spawns };
   }
 
   attemptMerge(from: Position, to: Position): TileColor | null {

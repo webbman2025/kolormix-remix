@@ -29,6 +29,19 @@ export class Scoring {
     return CONFIG.SCORE_CLEAR_BONUS;
   }
 
+  recordWildcardCollect(): number {
+    const bonus = CONFIG.SCORE_COMBO_BONUS;
+    this.score += bonus;
+    return bonus;
+  }
+
+  recordWildcardRewardClear(tileCount: number): number {
+    const bonus = tileCount * CONFIG.SCORE_CLEAR_BONUS;
+    this.score += bonus;
+    this.resetCombo();
+    return bonus;
+  }
+
   resetCombo(): void {
     this.comboCount = 0;
   }

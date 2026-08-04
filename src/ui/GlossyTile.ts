@@ -1,11 +1,13 @@
 import Phaser from 'phaser';
-import { TILE_COLORS, HIGH_CONTRAST_COLORS } from '../game/ColorMixer';
+import { TILE_COLORS, HIGH_CONTRAST_COLORS, isSecondary } from '../game/ColorMixer';
 import type { TileColor } from '../types';
 
 export interface TileVisualState {
   selected: boolean;
   validTarget: boolean;
   clearable: boolean;
+  wildcardBonus: boolean;
+  wildcardReward: boolean;
   highContrast: boolean;
 }
 
@@ -90,11 +92,45 @@ export function paintGlossyTile(
     strokeColor = 0xff44ff;
     strokeW = 4;
   }
+  if (state.wildcardReward) {
+    strokeColor = 0xffff66;
+    strokeW = 5;
+  }
+  if (state.wildcardBonus) {
+    strokeColor = 0xffdd44;
+    strokeW = 4;
+  }
 
   const outline = scene.add.graphics();
   outline.lineStyle(strokeW, strokeColor, 1);
   outline.strokeRoundedRect(-inner / 2, -inner / 2, inner, inner, radius);
   container.addAt(outline, 3);
+
+  if (state.wildcardReward && color && isSecondary(color)) {
+    const star = scene.add
+      .text(0, 0, '★', {
+        fontSize: `${Math.max(16, Math.round(size * 0.38))}px`,
+        color: '#ffffaa',
+        fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 3,
+      })
+      .setOrigin(0.5);
+    container.add(star);
+  }
+
+  if (state.wildcardBonus && color && color !== 'wildcard') {
+    const star = scene.add
+      .text(0, 0, '★', {
+        fontSize: `${Math.max(14, Math.round(size * 0.42))}px`,
+        color: '#ffee00',
+        fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 3,
+      })
+      .setOrigin(0.5);
+    container.add(star);
+  }
 
   if (color === 'wildcard') {
     const star = scene.add
@@ -122,6 +158,8 @@ export function paintPreviewTile(
     selected: highlighted,
     validTarget: false,
     clearable: false,
+    wildcardBonus: false,
+    wildcardReward: false,
     highContrast: false,
   });
   parts.hitArea.disableInteractive();

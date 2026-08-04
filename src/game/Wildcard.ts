@@ -1,6 +1,17 @@
 import { CONFIG } from '../config';
 import type { TileColor } from '../types';
 
+const MAIN_SECONDARIES: TileColor[] = ['green', 'purple', 'orange'];
+
+export function randomMainSecondary(): TileColor {
+  return MAIN_SECONDARIES[Math.floor(Math.random() * MAIN_SECONDARIES.length)];
+}
+
+/** One random goal secondary — all 9 wildcard reward tiles use green, purple, or orange. */
+export function pickWildcardRewardColor(): TileColor {
+  return randomMainSecondary();
+}
+
 export function shouldSpawnWildcard(currentWildcardCount: number): boolean {
   if (currentWildcardCount >= CONFIG.WILDCARD_MAX_ON_BOARD) return false;
   return Math.random() < CONFIG.WILDCARD_SPAWN_RATE;

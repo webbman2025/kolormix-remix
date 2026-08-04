@@ -50,3 +50,10 @@ export interface GravityResult {
   moves: TileMove[];
   spawns: TileSpawn[];
 }
+
+/** Secondary tile spawned when a wildcard bonus is activated. */
+export interface WildcardSpawn {
+  col: number;
+  row: number;
+  color: TileColor;
+}

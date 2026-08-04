@@ -33,13 +33,13 @@ import {
   paintGlossyTile,
   type GlossyTileParts,
 } from '../ui/GlossyTile';
-import { spawnExplodeBurst, tweenTileExplode } from '../ui/ClearEffects';
+import { spawnExplodeBurst, spawnMegaRewardBurst, spawnWildcardRingWave, flashWildcardReward, tweenTileExplode } from '../ui/ClearEffects';
 import {
   getPersonalBest,
   saveScore,
   updatePersonalBest,
 } from '../storage/Storage';
-import type { Position, TileColor, TileMove, TileSpawn } from '../types';
+import type { Position, TileColor, TileMove, TileSpawn, WildcardSpawn } from '../types';
 
 interface PointerStart {
   col: number;
@@ -77,6 +77,8 @@ export class GameScene extends Phaser.Scene {
   private header!: GameHeader;
   private previewRow!: PreviewRow;
   private overlayGroup: Phaser.GameObjects.GameObject[] = [];
+  private pendingWildcardSpawn = false;
+  private wildcardRewardAnchor: Position | null = null;
 
   constructor() {
     super({ key: 'GameScene' });
@@ -303,6 +305,8 @@ export class GameScene extends Phaser.Scene {
       selected: isSelected,
       validTarget: isValidTarget,
       clearable: isClearable,
+      wildcardBonus: this.grid.isWildcardBonus(col, row),
+      wildcardReward: this.grid.isWildcardReward(col, row),
       highContrast: this.contrast.isHighContrast(),
     });
   }
@@ -359,6 +363,14 @@ export class GameScene extends Phaser.Scene {
   }
 
   private selectTile(col: number, row: number): void {
+    if (this.grid.isWildcardBonus(col, row)) {
+      this.tryOpenWildcardBonus(col, row);
+      return;
+    }
+    if (this.grid.isWildcardReward(col, row)) {
+      this.tryCollectWildcardReward(col, row);
+      return;
+    }
     const color = this.grid.getCell(col, row);
     if (!color || isSecondary(color) || !isPrimaryForGoal(color, this.getCurrentGoal())) {
       this.shakeTile(col, row);
@@ -375,6 +387,16 @@ export class GameScene extends Phaser.Scene {
   }
 
   private handleTap(col: number, row: number): void {
+    if (this.grid.isWildcardReward(col, row)) {
+      if (this.tryCollectWildcardReward(col, row)) return;
+      return;
+    }
+
+    if (this.grid.isWildcardBonus(col, row)) {
+      if (this.tryOpenWildcardBonus(col, row)) return;
+      return;
+    }
+
     if (!this.grid.getCell(col, row)) return;
 
     if (this.isDoubleTap(col, row)) {
@@ -418,7 +440,190 @@ export class GameScene extends Phaser.Scene {
   }
 
   private isClearable(col: number, row: number): boolean {
+    if (this.grid.isWildcardCell(col, row)) return false;
+    const color = this.grid.getCell(col, row);
+    if (!color || !isSecondary(color)) return false;
     return this.grid.getSameSecondaryCluster(col, row).length >= CONFIG.SECONDARY_CLEAR_MIN;
+  }
+
+  private tryOpenWildcardBonus(col: number, row: number): boolean {
+    if (!this.grid.isWildcardBonus(col, row) || this.busy) return false;
+
+    const anchor = this.wildcardRewardAnchor ?? { col, row };
+    const spawns = this.grid.activateWildcardBonus(anchor);
+    if (spawns.length === 0) return false;
+
+    this.wildcardRewardAnchor = null;
+    this.selected = null;
+    this.busy = true;
+
+    const openBonus = this.scoring.recordWildcardCollect();
+    this.scoreDisplay.setScore(this.scoring.score);
+    const colorName = spawns[0].color;
+    announce(
+      `Wildcard! 9 ${colorName} tiles appeared. Tap any to collect!`,
+      true,
+    );
+
+    const tile = this.tileSprites[row][col];
+    this.scoreDisplay.showFloat(
+      tile.container.x,
+      tile.container.y,
+      `+${openBonus} ★×${spawns.length}`,
+      this,
+      this.layout.uiScale,
+    );
+
+    this.refreshGrid();
+    this.playWildcardSpawnReveal(spawns, () => {
+      this.busy = false;
+    });
+    return true;
+  }
+
+  private playWildcardSpawnReveal(
+    spawns: WildcardSpawn[],
+    onComplete: () => void,
+  ): void {
+    if (spawns.length === 0) {
+      onComplete();
+      return;
+    }
+
+    const center = spawns.reduce(
+      (acc, spawn) => {
+        const pos = this.getTilePosition(spawn.col, spawn.row);
+        return { x: acc.x + pos.x, y: acc.y + pos.y };
+      },
+      { x: 0, y: 0 },
+    );
+    center.x /= spawns.length;
+    center.y /= spawns.length;
+
+    if (!this.contrast.isReducedMotion()) {
+      spawnWildcardRingWave(this, center.x, center.y, this.layout.uiScale);
+      flashWildcardReward(this);
+      this.cameras.main.shake(220, 0.007 * this.layout.uiScale);
+    }
+
+    if (this.contrast.isReducedMotion()) {
+      onComplete();
+      return;
+    }
+
+    let pending = spawns.length;
+    const done = () => {
+      pending--;
+      if (pending === 0) onComplete();
+    };
+
+    spawns.forEach((spawn, index) => {
+      const parts = this.tileSprites[spawn.row][spawn.col];
+      const target = this.getTilePosition(spawn.col, spawn.row);
+      parts.container.setDepth(24);
+      parts.container.setPosition(center.x, center.y);
+      parts.container.setScale(0);
+
+      this.tweens.add({
+        targets: parts.container,
+        x: target.x,
+        y: target.y,
+        scale: 1,
+        delay: index * 35,
+        duration: 460,
+        ease: 'Back.easeOut',
+        onComplete: () => {
+          parts.container.setDepth(5);
+          done();
+        },
+      });
+    });
+  }
+
+  private tryCollectWildcardReward(col: number, row: number): boolean {
+    if (!this.grid.isWildcardReward(col, row) || this.busy) return false;
+
+    const group = this.grid.getWildcardRewardGroup();
+    if (group.length === 0) return false;
+
+    this.busy = true;
+    this.pointerStart = null;
+    this.lastTap = null;
+    this.selected = null;
+    this.snapAllTilesToGrid();
+
+    const color = this.grid.getCell(col, row);
+    const bonus = this.scoring.recordWildcardRewardClear(group.length);
+    this.scoreDisplay.setScore(this.scoring.score);
+    announce(`Wildcard reward! +${bonus} points!`, true);
+
+    const tile = this.tileSprites[row][col];
+    this.scoreDisplay.showFloat(
+      tile.container.x,
+      tile.container.y,
+      `+${bonus} JACKPOT!`,
+      this,
+      this.layout.uiScale,
+    );
+
+    this.grid.clearWildcardRewardFlags();
+
+    if (this.contrast.isReducedMotion()) {
+      this.grid.clearClusterWithGravity(group);
+      this.relayoutTiles();
+      this.finishClear();
+      return true;
+    }
+
+    this.playWildcardRewardCollect(group, color, () => {
+      const { moves, spawns } = this.grid.clearClusterWithGravity(group);
+      this.playGravityDrop(moves, spawns, () => {
+        this.relayoutTiles();
+        this.finishClear();
+      });
+    });
+    return true;
+  }
+
+  private playWildcardRewardCollect(
+    group: Position[],
+    color: TileColor | null,
+    onComplete: () => void,
+  ): void {
+    if (group.length === 0) {
+      onComplete();
+      return;
+    }
+
+    const center = group.reduce(
+      (acc, pos) => {
+        const p = this.getTilePosition(pos.col, pos.row);
+        return { x: acc.x + p.x, y: acc.y + p.y };
+      },
+      { x: 0, y: 0 },
+    );
+    center.x /= group.length;
+    center.y /= group.length;
+
+    flashWildcardReward(this);
+    spawnWildcardRingWave(this, center.x, center.y, this.layout.uiScale);
+    spawnMegaRewardBurst(this, center.x, center.y, color, this.layout.uiScale);
+    this.cameras.main.shake(320, 0.012 * this.layout.uiScale);
+
+    let pending = group.length;
+    const done = () => {
+      pending--;
+      if (pending === 0) onComplete();
+    };
+
+    for (const { col, row } of group) {
+      const parts = this.tileSprites[row][col];
+      const pos = this.getTilePosition(col, row);
+      spawnMegaRewardBurst(this, pos.x, pos.y, color, this.layout.uiScale);
+      spawnExplodeBurst(this, pos.x, pos.y, color, this.layout.uiScale);
+
+      tweenTileExplode(this, parts.container, done);
+    }
   }
 
   private clearAnimSafetyTimer: Phaser.Time.TimerEvent | null = null;
@@ -426,6 +631,11 @@ export class GameScene extends Phaser.Scene {
   private tryDoubleTapClear(col: number, row: number): boolean {
     const cluster = this.grid.getSameSecondaryCluster(col, row);
     if (cluster.length < CONFIG.SECONDARY_CLEAR_MIN || this.busy) return false;
+
+    this.pendingWildcardSpawn = cluster.length >= CONFIG.WILDCARD_CLEAR_THRESHOLD;
+    if (this.pendingWildcardSpawn) {
+      this.wildcardRewardAnchor = { col, row };
+    }
 
     this.busy = true;
     this.pointerStart = null;
@@ -480,6 +690,16 @@ export class GameScene extends Phaser.Scene {
     this.clearAnimSafetyTimer?.destroy();
     this.clearAnimSafetyTimer = null;
     this.busy = false;
+
+    if (this.pendingWildcardSpawn && this.wildcardRewardAnchor) {
+      this.pendingWildcardSpawn = false;
+      const { col, row } = this.wildcardRewardAnchor;
+      if (this.grid.spawnWildcardBonusAt(col, row)) {
+        announce('Wildcard bonus appeared! Tap it for 9 grouped secondary tiles.', true);
+        this.refreshGrid();
+      }
+    }
+
     if (this.grid.isGameOver()) this.endGame('Grid full!');
   }
 
@@ -603,6 +823,7 @@ export class GameScene extends Phaser.Scene {
     this.snapAllTilesToGrid();
     const { isCombo } = this.scoring.recordMerge();
     this.scoreDisplay.setScore(this.scoring.score);
+
     const goalCompleted = this.previewRow.onMergeResult(result);
     if (goalCompleted) {
       if (this.previewRow.isAllComplete()) {
@@ -684,6 +905,7 @@ export class GameScene extends Phaser.Scene {
     this.busy = true;
     this.scoring.resetCombo();
     this.selected = null;
+    this.wildcardRewardAnchor = null;
     this.header.setShakeUses(this.shake.usesRemaining);
     this.previewRow.reset();
     this.grid.clearAndRefill();

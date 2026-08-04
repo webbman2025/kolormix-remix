@@ -37,4 +37,11 @@ describe('Scoring', () => {
     expect(bonus).toBe(CONFIG.SCORE_CLEAR_BONUS);
     expect(scoring.comboCount).toBe(0);
   });
+
+  it('awards wildcard collect bonus', () => {
+    const scoring = new Scoring();
+    const bonus = scoring.recordWildcardCollect();
+    expect(bonus).toBe(CONFIG.SCORE_COMBO_BONUS);
+    expect(scoring.score).toBe(CONFIG.SCORE_COMBO_BONUS);
+  });
 });

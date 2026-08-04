@@ -10,6 +10,10 @@ export const CONFIG = {
   TIMER_CRITICAL_MS: 10_000,
   COMBO_THRESHOLD: 3,
   COMBO_IDLE_MS: 2_000,
+  /** Secondary tiles cleared at once to spawn a wildcard bonus on the board. */
+  WILDCARD_CLEAR_THRESHOLD: 5,
+  /** Secondary colors granted when the player taps a wildcard bonus tile. */
+  WILDCARD_BANK_SIZE: 9,
   SECONDARY_CLEAR_MIN: 3,
   SHAKE_MAX_USES: 3,
   WILDCARD_SPAWN_RATE: 0.05,

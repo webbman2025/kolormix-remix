@@ -35,7 +35,6 @@ export class PreviewRow {
   private totalText: Phaser.GameObjects.Text | null = null;
   private currentGoalContainer: Phaser.GameObjects.Container | null = null;
   private currentGoalPulse: Phaser.Tweens.Tween | null = null;
-  private currentGoalGlow: Phaser.FX.Glow | null = null;
 
   constructor(scene: Phaser.Scene, layout: GameLayout) {
     this.scene = scene;
@@ -113,7 +112,6 @@ export class PreviewRow {
     this.previewWells.forEach((w) => w.destroy());
     this.previewWells = [];
     this.previewContainers.forEach((c) => {
-      c.postFX?.clear();
       c.destroy();
     });
     this.previewContainers = [];
@@ -242,14 +240,9 @@ export class PreviewRow {
       this.currentGoalPulse.stop();
       this.currentGoalPulse = null;
     }
-    if (this.currentGoalGlow) {
-      this.scene.tweens.killTweensOf(this.currentGoalGlow);
-      this.currentGoalGlow = null;
-    }
     if (this.currentGoalContainer) {
       this.scene.tweens.killTweensOf(this.currentGoalContainer);
       this.currentGoalContainer.setScale(1);
-      this.currentGoalContainer.postFX?.clear();
     }
   }
 
@@ -258,23 +251,11 @@ export class PreviewRow {
     this.currentGoalContainer = container;
     container.setScale(1);
 
-    this.currentGoalGlow = container.postFX?.addGlow(0xffffff, 3, 0, false) ?? null;
-    if (this.currentGoalGlow) {
-      this.scene.tweens.add({
-        targets: this.currentGoalGlow,
-        outerStrength: 8,
-        duration: 1100,
-        ease: 'Sine.easeInOut',
-        yoyo: true,
-        repeat: -1,
-      });
-    }
-
     this.currentGoalPulse = this.scene.tweens.add({
       targets: container,
-      scaleX: 1.07,
-      scaleY: 1.07,
-      duration: 1100,
+      scaleX: 1.06,
+      scaleY: 1.06,
+      duration: 1200,
       ease: 'Sine.easeInOut',
       yoyo: true,
       repeat: -1,

@@ -125,6 +125,33 @@ export class Grid {
     return cluster;
   }
 
+  /** Cells that belong to a clearable same-color secondary cluster (computed once per refresh). */
+  getClearableClusterKeys(): Set<string> {
+    const clearable = new Set<string>();
+    const visited = new Set<string>();
+
+    for (let row = 0; row < this.rows; row++) {
+      for (let col = 0; col < this.cols; col++) {
+        const key = `${col},${row}`;
+        if (visited.has(key)) continue;
+
+        const color = this.getCell(col, row);
+        if (!color || !isSecondary(color)) continue;
+
+        const cluster = this.getSameSecondaryCluster(col, row);
+        if (cluster.length < CONFIG.SECONDARY_CLEAR_MIN) continue;
+
+        for (const pos of cluster) {
+          const clusterKey = `${pos.col},${pos.row}`;
+          visited.add(clusterKey);
+          clearable.add(clusterKey);
+        }
+      }
+    }
+
+    return clearable;
+  }
+
   removeTiles(positions: Position[], refill = true): void {
     for (const { col, row } of positions) {
       if (this.inBounds(col, row)) this.cells[row][col] = null;

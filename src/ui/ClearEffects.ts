@@ -11,7 +11,7 @@ export function spawnExplodeBurst(
   uiScale: number,
 ): void {
   const fill = color ? TILE_COLORS[color].fill : 0xffffff;
-  const count = 10;
+  const count = uiScale < 1 ? 6 : 10;
   const spread = 32 * uiScale;
   const size = Math.max(3, Math.round(4 * uiScale));
 

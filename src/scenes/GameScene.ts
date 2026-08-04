@@ -281,7 +281,12 @@ export class GameScene extends Phaser.Scene {
     return parts;
   }
 
-  private paintCell(parts: GlossyTileParts, col: number, row: number): void {
+  private paintCell(
+    parts: GlossyTileParts,
+    col: number,
+    row: number,
+    clearableKeys?: Set<string>,
+  ): void {
     const color = this.grid.getCell(col, row);
     const isSelected = this.selected?.col === col && this.selected?.row === row;
     const isValidTarget =
@@ -290,7 +295,9 @@ export class GameScene extends Phaser.Scene {
       this.grid.isAdjacent(this.selected, { col, row }) &&
       !!color &&
       this.canMergeCells(this.selected, { col, row });
-    const isClearable = this.isClearable(col, row);
+    const isClearable =
+      clearableKeys?.has(`${col},${row}`) ??
+      this.isClearable(col, row);
 
     paintGlossyTile(this, parts, this.layout.tileSize, color, {
       selected: isSelected,
@@ -327,9 +334,10 @@ export class GameScene extends Phaser.Scene {
 
   private refreshGrid(): void {
     this.snapAllTilesToGrid();
+    const clearableKeys = this.grid.getClearableClusterKeys();
     for (let row = 0; row < CONFIG.GRID_ROWS; row++) {
       for (let col = 0; col < CONFIG.GRID_COLS; col++) {
-        this.paintCell(this.tileSprites[row][col], col, row);
+        this.paintCell(this.tileSprites[row][col], col, row, clearableKeys);
       }
     }
   }
@@ -692,9 +700,11 @@ export class GameScene extends Phaser.Scene {
     this.paused = !this.paused;
     if (this.paused) {
       this.timer.pause();
+      this.game.loop.sleep();
       this.showPauseOverlay();
     } else {
       this.timer.resume();
+      this.game.loop.wake();
       this.clearOverlay();
     }
   }
@@ -753,6 +763,7 @@ export class GameScene extends Phaser.Scene {
   private endGame(reason: string): void {
     this.paused = true;
     this.timer.pause();
+    this.game.loop.sleep();
 
     let timeBonus = 0;
     if (this.mode !== 'classic') {

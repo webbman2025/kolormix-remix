@@ -13,8 +13,10 @@ export class TimerBar {
   private fill: Phaser.GameObjects.Graphics;
   private fillH = 0;
   private progress = 1;
+  private lastDrawnProgress = -1;
   private state: 'normal' | 'warning' | 'critical' = 'normal';
   private flashTimer = 0;
+  private lastFlashAlpha = 1;
 
   constructor(scene: Phaser.Scene, layout: GameLayout) {
     this.scene = scene;
@@ -80,6 +82,9 @@ export class TimerBar {
   updateProgress(progress: number): void {
     if (!this.active) return;
     this.progress = Phaser.Math.Clamp(progress, 0, 1);
+    const quantized = Math.round(this.progress * 100) / 100;
+    if (quantized === this.lastDrawnProgress && this.state !== 'critical') return;
+    this.lastDrawnProgress = quantized;
     const innerH = this.height - 8;
     this.fillH = Math.max(4, innerH * this.progress);
     this.redrawFill();
@@ -104,16 +109,19 @@ export class TimerBar {
 
   setWarning(): void {
     this.state = 'warning';
+    this.lastDrawnProgress = -1;
     this.redrawFill();
   }
 
   setCritical(): void {
     this.state = 'critical';
+    this.lastDrawnProgress = -1;
     this.redrawFill();
   }
 
   setNormal(): void {
     this.state = 'normal';
+    this.lastDrawnProgress = -1;
     this.redrawFill();
   }
 
@@ -130,7 +138,12 @@ export class TimerBar {
   tick(delta: number, reducedMotion: boolean): void {
     if (!this.active || this.state !== 'critical' || reducedMotion) return;
     this.flashTimer += delta;
-    this.fill.alpha = Math.sin(this.flashTimer / 100) > 0 ? 1 : 0.5;
+    if (this.flashTimer < 200) return;
+    this.flashTimer = 0;
+    const alpha = this.lastFlashAlpha > 0.75 ? 0.5 : 1;
+    if (alpha === this.lastFlashAlpha) return;
+    this.lastFlashAlpha = alpha;
+    this.fill.alpha = alpha;
   }
 
   destroy(): void {

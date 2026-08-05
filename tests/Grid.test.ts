@@ -220,6 +220,20 @@ describe('Grid', () => {
     expect(grid.spawnWildcardBonusAt(2, 4)).toBe(true);
     expect(grid.isWildcardBonus(2, 4)).toBe(true);
   });
+
+  it('chains wildcard reward tiles with adjacent same-color secondaries', () => {
+    const grid = new Grid();
+    grid.cells = Array.from({ length: 8 }, () => Array.from({ length: 6 }, () => 'red'));
+    grid.setWildcardBonus(2, 3, 'green');
+    const spawns = grid.activateWildcardBonus({ col: 2, row: 3 });
+    const color = spawns[0].color;
+
+    grid.cells[3][0] = color;
+
+    const cluster = grid.getSameSecondaryCluster(2, 3);
+    expect(cluster.length).toBe(10);
+    expect(grid.clusterHasWildcardReward(cluster)).toBe(true);
+  });
 });
 
 describe('Wildcard rewards', () => {

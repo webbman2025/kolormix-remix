@@ -241,9 +241,9 @@ export class Grid {
     return true;
   }
 
-  /** Connected tiles of the same secondary color (orthogonal only — no diagonal bridge). */
+  /** Connected same-color secondaries — includes wildcard reward tiles and chains to neighbors. */
   getSameSecondaryCluster(col: number, row: number): Position[] {
-    if (this.isWildcardCell(col, row)) return [];
+    if (this.isWildcardBonus(col, row)) return [];
 
     const start = this.getCell(col, row);
     if (!start || !isSecondary(start)) return [];
@@ -257,7 +257,7 @@ export class Grid {
       const pos = queue.shift()!;
       const key = `${pos.col},${pos.row}`;
       if (visited.has(key)) continue;
-      if (this.isWildcardCell(pos.col, pos.row)) continue;
+      if (this.isWildcardBonus(pos.col, pos.row)) continue;
 
       const color = this.getCell(pos.col, pos.row);
       if (color !== targetColor) continue;
@@ -281,6 +281,10 @@ export class Grid {
     return cluster;
   }
 
+  clusterHasWildcardReward(cluster: Position[]): boolean {
+    return cluster.some((p) => this.isWildcardReward(p.col, p.row));
+  }
+
   /** Cells that belong to a clearable same-color secondary cluster (computed once per refresh). */
   getClearableClusterKeys(): Set<string> {
     const clearable = new Set<string>();
@@ -290,7 +294,7 @@ export class Grid {
       for (let col = 0; col < this.cols; col++) {
         const key = `${col},${row}`;
         if (visited.has(key)) continue;
-        if (this.isWildcardCell(col, row)) continue;
+        if (this.isWildcardBonus(col, row)) continue;
 
         const color = this.getCell(col, row);
         if (!color || !isSecondary(color)) continue;

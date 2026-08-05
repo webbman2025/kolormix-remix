@@ -387,9 +387,23 @@ export class GameScene extends Phaser.Scene {
   }
 
   private handleTap(col: number, row: number): void {
-    if (this.grid.isWildcardReward(col, row)) {
-      if (this.tryCollectWildcardReward(col, row)) return;
-      return;
+    const cluster = this.grid.getSameSecondaryCluster(col, row);
+    const inRewardChain =
+      this.grid.isWildcardReward(col, row) ||
+      this.clusterTouchesWildcardReward(cluster);
+
+    if (inRewardChain) {
+      if (this.isDoubleTap(col, row)) {
+        this.lastTap = null;
+        if (this.tryDoubleTapClear(col, row)) return;
+        this.shakeTile(col, row);
+        return;
+      }
+      if (this.grid.isWildcardReward(col, row)) {
+        if (this.tryCollectWildcardReward(col, row)) return;
+        this.recordTap(col, row);
+        return;
+      }
     }
 
     if (this.grid.isWildcardBonus(col, row)) {
@@ -440,10 +454,14 @@ export class GameScene extends Phaser.Scene {
   }
 
   private isClearable(col: number, row: number): boolean {
-    if (this.grid.isWildcardCell(col, row)) return false;
+    if (this.grid.isWildcardBonus(col, row)) return false;
     const color = this.grid.getCell(col, row);
     if (!color || !isSecondary(color)) return false;
     return this.grid.getSameSecondaryCluster(col, row).length >= CONFIG.SECONDARY_CLEAR_MIN;
+  }
+
+  private clusterTouchesWildcardReward(cluster: Position[]): boolean {
+    return this.grid.clusterHasWildcardReward(cluster);
   }
 
   private tryOpenWildcardBonus(col: number, row: number): boolean {
@@ -477,6 +495,14 @@ export class GameScene extends Phaser.Scene {
     this.refreshGrid();
     this.playWildcardSpawnReveal(spawns, () => {
       this.busy = false;
+      const chain = this.grid.getSameSecondaryCluster(spawns[0].col, spawns[0].row);
+      if (chain.length > spawns.length) {
+        announce(
+          `Chain! ${chain.length} connected ${colorName} tiles — double-tap to clear.`,
+          true,
+        );
+      }
+      this.refreshGrid();
     });
     return true;
   }
@@ -543,8 +569,8 @@ export class GameScene extends Phaser.Scene {
   private tryCollectWildcardReward(col: number, row: number): boolean {
     if (!this.grid.isWildcardReward(col, row) || this.busy) return false;
 
-    const group = this.grid.getWildcardRewardGroup();
-    if (group.length === 0) return false;
+    const group = this.grid.getSameSecondaryCluster(col, row);
+    if (!this.clusterTouchesWildcardReward(group)) return false;
 
     this.busy = true;
     this.pointerStart = null;
@@ -555,7 +581,12 @@ export class GameScene extends Phaser.Scene {
     const color = this.grid.getCell(col, row);
     const bonus = this.scoring.recordWildcardRewardClear(group.length);
     this.scoreDisplay.setScore(this.scoring.score);
-    announce(`Wildcard reward! +${bonus} points!`, true);
+    announce(
+      group.length > CONFIG.WILDCARD_BANK_SIZE
+        ? `Chain collected! ${group.length} tiles, +${bonus} points!`
+        : `Wildcard reward! +${bonus} points!`,
+      true,
+    );
 
     const tile = this.tileSprites[row][col];
     this.scoreDisplay.showFloat(
@@ -632,6 +663,10 @@ export class GameScene extends Phaser.Scene {
     const cluster = this.grid.getSameSecondaryCluster(col, row);
     if (cluster.length < CONFIG.SECONDARY_CLEAR_MIN || this.busy) return false;
 
+    if (this.clusterTouchesWildcardReward(cluster)) {
+      return this.tryClearRewardChain(col, row, cluster);
+    }
+
     this.pendingWildcardSpawn = cluster.length >= CONFIG.WILDCARD_CLEAR_THRESHOLD;
     if (this.pendingWildcardSpawn) {
       this.wildcardRewardAnchor = { col, row };
@@ -666,6 +701,51 @@ export class GameScene extends Phaser.Scene {
     this.startClearAnimSafety();
 
     this.playClusterExplode(cluster, () => {
+      const { moves, spawns } = this.grid.clearClusterWithGravity(cluster);
+      this.playGravityDrop(moves, spawns, () => {
+        this.relayoutTiles();
+        this.finishClear();
+      });
+    });
+    return true;
+  }
+
+  private tryClearRewardChain(
+    col: number,
+    row: number,
+    cluster: Position[],
+  ): boolean {
+    this.busy = true;
+    this.pointerStart = null;
+    this.lastTap = null;
+    this.selected = null;
+    this.snapAllTilesToGrid();
+
+    const color = this.grid.getCell(col, row);
+    const bonus = this.scoring.recordWildcardRewardClear(cluster.length);
+    this.scoreDisplay.setScore(this.scoring.score);
+    announce(`Chain clear! ${cluster.length} tiles, +${bonus} points!`, true);
+
+    const tile = this.tileSprites[row][col];
+    this.scoreDisplay.showFloat(
+      tile.container.x,
+      tile.container.y,
+      `+${bonus} CHAIN!`,
+      this,
+      this.layout.uiScale,
+    );
+
+    this.grid.clearWildcardRewardFlags();
+
+    if (this.contrast.isReducedMotion()) {
+      this.grid.clearClusterWithGravity(cluster);
+      this.relayoutTiles();
+      this.finishClear();
+      return true;
+    }
+
+    this.startClearAnimSafety();
+    this.playWildcardRewardCollect(cluster, color, () => {
       const { moves, spawns } = this.grid.clearClusterWithGravity(cluster);
       this.playGravityDrop(moves, spawns, () => {
         this.relayoutTiles();

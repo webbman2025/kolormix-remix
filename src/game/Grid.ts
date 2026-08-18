@@ -3,6 +3,19 @@ import { canMerge, isPrimary, isSecondary, merge, SPAWN_COLORS } from './ColorMi
 import { pickWildcardRewardColor, randomMainSecondary } from './Wildcard';
 import type { GravityResult, Position, TileColor, TileMove, TileSpawn, WildcardSpawn } from '../types';
 
+interface BoardTileState {
+  color: TileColor;
+  wildcardBonus: TileColor | null;
+  wildcardReward: boolean;
+}
+
+function shuffleInPlace<T>(items: T[]): void {
+  for (let i = items.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [items[i], items[j]] = [items[j], items[i]];
+  }
+}
+
 export class Grid {
   readonly cols = CONFIG.GRID_COLS;
   readonly rows = CONFIG.GRID_ROWS;
@@ -104,46 +117,198 @@ export class Grid {
     }
   }
 
-  /**
-   * Tap sealed wildcard — spawn a 3×3 block of 9 same-color secondaries
-   * grouped at the anchor where the player cleared 5+ tiles.
-   */
-  activateWildcardBonus(anchor: Position): WildcardSpawn[] {
-    this.clearWildcardRewardFlags();
-    const rewardColor = pickWildcardRewardColor();
-    const targets = this.getGrouped3x3(anchor);
-    const spawns: WildcardSpawn[] = [];
-
-    for (const pos of targets) {
-      this.wildcardBonus[pos.row][pos.col] = null;
-      this.cells[pos.row][pos.col] = rewardColor;
-      this.wildcardReward[pos.row][pos.col] = true;
-      spawns.push({ col: pos.col, row: pos.row, color: rewardColor });
+  countSealedWildcards(): number {
+    let count = 0;
+    for (let row = 0; row < this.rows; row++) {
+      for (let col = 0; col < this.cols; col++) {
+        if (this.isWildcardBonus(col, row)) count++;
+      }
     }
-
-    return spawns;
+    return count;
   }
 
-  /** Nine grid cells in a 3×3 block, centered on anchor and clamped to the board. */
-  getGrouped3x3(anchor: Position): Position[] {
-    const centerCol = Math.max(1, Math.min(this.cols - 2, anchor.col));
-    const centerRow = Math.max(1, Math.min(this.rows - 2, anchor.row));
+  canSpawnSealedWildcard(): boolean {
+    return this.countSealedWildcards() < CONFIG.WILDCARD_MAX_PER_GAME;
+  }
+
+  /**
+   * Tap sealed wildcard — first the tapped ★ bursts, then each chain wave detonates
+   * every ★ caught in the previous wave simultaneously (conflicts keep prior wave color).
+   */
+  activateWildcardBonusChain(anchor: Position, source: Position): WildcardSpawn[][] {
+    this.clearWildcardRewardFlags();
+    const waves = this.planWildcardBonusChain(anchor, source);
+    for (const wave of waves) {
+      this.applyWildcardWave(wave);
+    }
+    return waves;
+  }
+
+  /** Compute burst waves without mutating the live grid (for staged animation). */
+  planWildcardBonusChain(_anchor: Position, source: Position): WildcardSpawn[][] {
+    const cells = this.cells.map((row) => [...row]);
+    const wildcardBonus = this.wildcardBonus.map((row) => [...row]);
+    const waves: WildcardSpawn[][] = [];
+
+    const nextBatch: Position[] = [];
+    waves.push(this.burstWildcardAtOnState(cells, wildcardBonus, source, nextBatch));
+
+    let batch = Grid.dedupePositions(nextBatch);
+    while (batch.length > 0) {
+      const upcoming: Position[] = [];
+      waves.push(
+        this.burstSimultaneousBatchOnState(cells, wildcardBonus, batch, upcoming),
+      );
+      batch = Grid.dedupePositions(upcoming);
+    }
+
+    return waves;
+  }
+
+  private static dedupePositions(positions: Position[]): Position[] {
+    const seen = new Set<string>();
+    const result: Position[] = [];
+    for (const pos of positions) {
+      const key = `${pos.col},${pos.row}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push(pos);
+    }
+    return result;
+  }
+
+  private static posKey(pos: Position): string {
+    return `${pos.col},${pos.row}`;
+  }
+
+  applyWildcardWave(spawns: WildcardSpawn[]): void {
+    for (const { col, row, color } of spawns) {
+      this.wildcardBonus[row][col] = null;
+      this.cells[row][col] = color;
+      this.wildcardReward[row][col] = true;
+    }
+  }
+
+  /** In-bounds cells in a 3×3 around center — fewer on board edges/corners. */
+  getGrouped3x3(center: Position): Position[] {
     const positions: Position[] = [];
 
     for (let dr = -1; dr <= 1; dr++) {
       for (let dc = -1; dc <= 1; dc++) {
-        positions.push({ col: centerCol + dc, row: centerRow + dr });
+        const col = center.col + dc;
+        const row = center.row + dr;
+        if (this.inBounds(col, row)) {
+          positions.push({ col, row });
+        }
       }
     }
 
     return positions;
   }
 
+  private burstWildcardAtOnState(
+    cells: (TileColor | null)[][],
+    wildcardBonus: (TileColor | null)[][],
+    source: Position,
+    chainQueue: Position[],
+  ): WildcardSpawn[] {
+    const rewardColor =
+      wildcardBonus[source.row][source.col] ?? pickWildcardRewardColor();
+    const targets = this.getGrouped3x3(source);
+    const spawns: WildcardSpawn[] = [];
+
+    for (const pos of targets) {
+      if (
+        wildcardBonus[pos.row][pos.col] !== null &&
+        (pos.col !== source.col || pos.row !== source.row)
+      ) {
+        if (!chainQueue.some((p) => p.col === pos.col && p.row === pos.row)) {
+          chainQueue.push({ col: pos.col, row: pos.row });
+        }
+        continue;
+      }
+
+      wildcardBonus[pos.row][pos.col] = null;
+      cells[pos.row][pos.col] = rewardColor;
+      spawns.push({ col: pos.col, row: pos.row, color: rewardColor });
+    }
+
+    return spawns;
+  }
+
+  /** Every ★ in the batch bursts at once; cells claimed by 2+ bursts keep the prior wave color. */
+  private burstSimultaneousBatchOnState(
+    cells: (TileColor | null)[][],
+    wildcardBonus: (TileColor | null)[][],
+    batch: Position[],
+    nextBatch: Position[],
+  ): WildcardSpawn[] {
+    const batchKeys = new Set(batch.map((p) => Grid.posKey(p)));
+    const claims = new Map<string, TileColor[]>();
+    const forced = new Map<string, TileColor>();
+
+    const queueNext = (pos: Position): void => {
+      if (!nextBatch.some((p) => p.col === pos.col && p.row === pos.row)) {
+        nextBatch.push({ col: pos.col, row: pos.row });
+      }
+    };
+
+    const addClaim = (pos: Position, color: TileColor): void => {
+      const key = Grid.posKey(pos);
+      const list = claims.get(key) ?? [];
+      list.push(color);
+      claims.set(key, list);
+    };
+
+    for (const source of batch) {
+      const color =
+        wildcardBonus[source.row][source.col] ?? pickWildcardRewardColor();
+      forced.set(Grid.posKey(source), color);
+
+      for (const pos of this.getGrouped3x3(source)) {
+        const key = Grid.posKey(pos);
+        if (wildcardBonus[pos.row][pos.col] !== null && !batchKeys.has(key)) {
+          queueNext(pos);
+          continue;
+        }
+        addClaim(pos, color);
+      }
+    }
+
+    const spawns: WildcardSpawn[] = [];
+    const applied = new Set<string>();
+
+    for (const [key, color] of forced) {
+      const [col, row] = key.split(',').map(Number);
+      wildcardBonus[row][col] = null;
+      cells[row][col] = color;
+      spawns.push({ col, row, color });
+      applied.add(key);
+    }
+
+    for (const [key, colors] of claims) {
+      if (applied.has(key)) continue;
+      if (colors.length >= 2) continue;
+
+      const [col, row] = key.split(',').map(Number);
+      wildcardBonus[row][col] = null;
+      cells[row][col] = colors[0];
+      spawns.push({ col, row, color: colors[0] });
+      applied.add(key);
+    }
+
+    for (const source of batch) {
+      wildcardBonus[source.row][source.col] = null;
+    }
+
+    return spawns;
+  }
+
   /** Place a sealed wildcard at the clear tap position. */
-  spawnWildcardBonusAt(col: number, row: number): boolean {
+  spawnWildcardBonusAt(col: number, row: number, disguise: TileColor = randomMainSecondary()): boolean {
     if (!this.inBounds(col, row)) return false;
     if (this.isWildcardBonus(col, row)) return true;
-    this.setWildcardBonus(col, row, randomMainSecondary());
+    this.setWildcardBonus(col, row, disguise);
     return true;
   }
 
@@ -160,8 +325,15 @@ export class Grid {
 
   private refillQueue(min = 10): void {
     while (this.spawnQueue.length < min) {
-      this.spawnQueue.push(this.spawnRandomTile());
+      this.spawnQueue.push(...this.nextSpawnBatch());
     }
+  }
+
+  /** One red, one blue, one yellow — shuffled so primaries stay evenly distributed. */
+  private nextSpawnBatch(): TileColor[] {
+    const batch = [...SPAWN_COLORS];
+    shuffleInPlace(batch);
+    return batch;
   }
 
   peekNext(count: number): TileColor[] {
@@ -175,7 +347,47 @@ export class Grid {
   }
 
   spawnRandomTile(): TileColor {
-    return SPAWN_COLORS[Math.floor(Math.random() * SPAWN_COLORS.length)];
+    this.refillQueue(1);
+    return this.spawnQueue.shift()!;
+  }
+
+  /** Randomize tile positions without changing colors, wildcards, or rewards. */
+  shuffleTiles(): void {
+    const slots: (BoardTileState | null)[] = [];
+
+    for (let row = 0; row < this.rows; row++) {
+      for (let col = 0; col < this.cols; col++) {
+        const color = this.cells[row][col];
+        if (!color) {
+          slots.push(null);
+          continue;
+        }
+
+        slots.push({
+          color,
+          wildcardBonus: this.wildcardBonus[row][col],
+          wildcardReward: this.wildcardReward[row][col],
+        });
+      }
+    }
+
+    shuffleInPlace(slots);
+
+    this.cells = this.createEmpty();
+    this.wildcardBonus = this.createWildcardEmpty();
+    this.wildcardReward = this.createRewardEmpty();
+
+    let index = 0;
+    for (let row = 0; row < this.rows; row++) {
+      for (let col = 0; col < this.cols; col++) {
+        const tile = slots[index++];
+        if (!tile) continue;
+
+        this.cells[row][col] = tile.color;
+        this.wildcardBonus[row][col] = tile.wildcardBonus;
+        this.wildcardReward[row][col] = tile.wildcardReward;
+      }
+    }
   }
 
   fillAll(): void {

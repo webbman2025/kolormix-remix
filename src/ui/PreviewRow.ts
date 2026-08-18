@@ -32,7 +32,6 @@ export class PreviewRow {
   private previewContainers: Phaser.GameObjects.Container[] = [];
   private counterTiles: Phaser.GameObjects.Container[] = [];
   private counterTexts: Partial<Record<MainSecondaryGoal, Phaser.GameObjects.Text>> = {};
-  private totalText: Phaser.GameObjects.Text | null = null;
   private currentGoalContainer: Phaser.GameObjects.Container | null = null;
   private currentGoalPulse: Phaser.Tweens.Tween | null = null;
 
@@ -54,16 +53,6 @@ export class PreviewRow {
         .setDepth(DEPTH.LABEL);
     });
 
-    this.totalText = scene.add
-      .text(0, 0, '75', {
-        fontFamily: 'Arial Black, Impact, sans-serif',
-        fontSize: '12px',
-        color: '#111111',
-        fontStyle: 'bold',
-      })
-      .setOrigin(0.5)
-      .setDepth(DEPTH.LABEL);
-
     this.rebuild();
   }
 
@@ -82,9 +71,13 @@ export class PreviewRow {
 
   onMergeResult(result: TileColor): boolean {
     const completed = this.goalQueue.tryComplete(result);
-    this.refreshCounters();
     if (completed) this.rebuildSlots();
     return completed;
+  }
+
+  onClear(color: TileColor, tileCount: number): void {
+    this.goalQueue.recordClear(color, tileCount);
+    this.refreshCounters();
   }
 
   reset(): void {
@@ -148,7 +141,7 @@ export class PreviewRow {
     const counterGap = Math.round(4 * s);
     const counterPad = Math.round(5 * s);
     const clusterW = counterSize * 3 + counterGap * 2 + counterPad * 2;
-    const clusterH = counterSize * 2 + counterGap + counterPad * 2;
+    const clusterH = counterSize + counterPad * 2;
     const clusterX = width - margin - clusterW;
     const clusterY = bandTop + (bandH - clusterH) / 2;
     const previewTrayW = clusterX - margin;
@@ -268,7 +261,6 @@ export class PreviewRow {
     const m = this.getMetrics();
 
     const topY = m.clusterY + m.counterPad + m.counterSize / 2;
-    const bottomY = topY + m.counterSize + m.counterGap;
     const startX = m.clusterX + m.counterPad + m.counterSize / 2;
     const labelSize = Math.max(10, Math.round(12 * s));
 
@@ -292,31 +284,12 @@ export class PreviewRow {
         ?.setPosition(cx, topY)
         .setFontSize(labelSize);
     });
-
-    this.counterWells.push(
-      drawTileWell(this.scene, startX, bottomY, m.counterSize, DEPTH.WELL),
-    );
-    this.counterTiles.push(
-      paintPreviewTile(
-        this.scene,
-        startX,
-        bottomY,
-        m.counterSize,
-        'pink',
-        false,
-        DEPTH.TILE,
-      ),
-    );
-    this.totalText?.setPosition(startX, bottomY).setFontSize(labelSize);
   }
 
   private refreshCounters(): void {
-    let total = 0;
     COUNTER_KEYS.forEach((key) => {
       const remaining = this.goalQueue.getRemaining(key);
-      total += remaining;
       this.counterTexts[key]?.setText(String(remaining));
     });
-    this.totalText?.setText(String(total));
   }
 }

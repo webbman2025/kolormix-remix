@@ -4,6 +4,8 @@ import { Grid } from '../game/Grid';
 import { Scoring } from '../game/Scoring';
 import { Timer } from '../game/Timer';
 import { Shake } from '../game/Shake';
+import { RunStats } from '../game/RunStats';
+import { randomMainSecondary } from '../game/Wildcard';
 import {
   getRecipeLabel,
   isMergeAllowedForGoal,
@@ -56,6 +58,7 @@ export class GameScene extends Phaser.Scene {
   private mode: GameMode = 'timed';
   private grid!: Grid;
   private scoring = new Scoring();
+  private runStats = new RunStats();
   private timer!: Timer;
   private shake = new Shake();
   private contrast = new ContrastMode();
@@ -79,6 +82,7 @@ export class GameScene extends Phaser.Scene {
   private overlayGroup: Phaser.GameObjects.GameObject[] = [];
   private pendingWildcardSpawn = false;
   private wildcardRewardAnchor: Position | null = null;
+  private wildcardRewardColor: TileColor | null = null;
 
   constructor() {
     super({ key: 'GameScene' });
@@ -99,6 +103,7 @@ export class GameScene extends Phaser.Scene {
 
     this.grid = new Grid();
     this.scoring = new Scoring();
+    this.runStats.reset();
     this.shake = new Shake();
 
     const hasTimer = this.mode !== 'classic';
@@ -468,20 +473,31 @@ export class GameScene extends Phaser.Scene {
     if (!this.grid.isWildcardBonus(col, row) || this.busy) return false;
 
     const anchor = this.wildcardRewardAnchor ?? { col, row };
-    const spawns = this.grid.activateWildcardBonus(anchor);
+    this.grid.clearWildcardRewardFlags();
+    const waves = this.grid.planWildcardBonusChain(anchor, { col, row });
+    this.runStats.recordWildcardChain(waves.length);
+    const spawns = waves.flat();
     if (spawns.length === 0) return false;
 
     this.wildcardRewardAnchor = null;
+    this.wildcardRewardColor = null;
     this.selected = null;
     this.busy = true;
 
     const openBonus = this.scoring.recordWildcardCollect();
     this.scoreDisplay.setScore(this.scoring.score);
-    const colorName = spawns[0].color;
-    announce(
-      `Wildcard! 9 ${colorName} tiles appeared. Tap any to collect!`,
-      true,
-    );
+    const primaryColor = waves[0][0]?.color ?? spawns[0].color;
+    if (waves.length > 1) {
+      announce(
+        `Wildcard chain! ${spawns.length} tiles appeared. Double-tap to collect!`,
+        true,
+      );
+    } else {
+      announce(
+        `Wildcard! ${waves[0].length} ${primaryColor} tiles appeared. Tap any to collect!`,
+        true,
+      );
+    }
 
     const tile = this.tileSprites[row][col];
     this.scoreDisplay.showFloat(
@@ -492,19 +508,61 @@ export class GameScene extends Phaser.Scene {
       this.layout.uiScale,
     );
 
-    this.refreshGrid();
-    this.playWildcardSpawnReveal(spawns, () => {
+    if (this.contrast.isReducedMotion()) {
+      for (const wave of waves) {
+        this.grid.applyWildcardWave(wave);
+      }
+      this.refreshGrid();
+      this.busy = false;
+      return true;
+    }
+
+    this.playWildcardChainReveal(waves, () => {
       this.busy = false;
       const chain = this.grid.getSameSecondaryCluster(spawns[0].col, spawns[0].row);
       if (chain.length > spawns.length) {
         announce(
-          `Chain! ${chain.length} connected ${colorName} tiles — double-tap to clear.`,
+          `Chain! ${chain.length} connected tiles — double-tap to collect.`,
           true,
         );
       }
       this.refreshGrid();
     });
     return true;
+  }
+
+  private static readonly WILDCARD_CHAIN_PAUSE_MS = 520;
+
+  private playWildcardChainReveal(
+    waves: WildcardSpawn[][],
+    onComplete: () => void,
+  ): void {
+    if (waves.length === 0) {
+      onComplete();
+      return;
+    }
+
+    let waveIndex = 0;
+    const playNext = () => {
+      if (waveIndex >= waves.length) {
+        onComplete();
+        return;
+      }
+
+      const wave = waves[waveIndex++];
+      this.grid.applyWildcardWave(wave);
+      this.refreshGrid();
+
+      this.playWildcardSpawnReveal(wave, () => {
+        if (waveIndex < waves.length) {
+          this.time.delayedCall(GameScene.WILDCARD_CHAIN_PAUSE_MS, playNext);
+        } else {
+          playNext();
+        }
+      });
+    };
+
+    playNext();
   }
 
   private playWildcardSpawnReveal(
@@ -577,6 +635,8 @@ export class GameScene extends Phaser.Scene {
     this.lastTap = null;
     this.selected = null;
     this.snapAllTilesToGrid();
+
+    this.recordClearGoals(group);
 
     const color = this.grid.getCell(col, row);
     const bonus = this.scoring.recordWildcardRewardClear(group.length);
@@ -657,6 +717,19 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  private recordClearGoals(cluster: Position[]): void {
+    if (cluster.length === 0) return;
+
+    const color = this.grid.getCell(cluster[0].col, cluster[0].row);
+    if (!color) return;
+
+    this.previewRow.onClear(color, cluster.length);
+
+    if (this.previewRow.isAllComplete()) {
+      announce('All objectives complete!', true);
+    }
+  }
+
   private clearAnimSafetyTimer: Phaser.Time.TimerEvent | null = null;
 
   private tryDoubleTapClear(col: number, row: number): boolean {
@@ -667,9 +740,13 @@ export class GameScene extends Phaser.Scene {
       return this.tryClearRewardChain(col, row, cluster);
     }
 
-    this.pendingWildcardSpawn = cluster.length >= CONFIG.WILDCARD_CLEAR_THRESHOLD;
+    this.pendingWildcardSpawn =
+      cluster.length >= CONFIG.WILDCARD_CLEAR_THRESHOLD &&
+      this.grid.canSpawnSealedWildcard();
     if (this.pendingWildcardSpawn) {
       this.wildcardRewardAnchor = { col, row };
+      this.wildcardRewardColor = this.grid.getCell(col, row);
+      this.runStats.recordClearForWildcard(cluster.length);
     }
 
     this.busy = true;
@@ -677,6 +754,8 @@ export class GameScene extends Phaser.Scene {
     this.lastTap = null;
     this.selected = null;
     this.snapAllTilesToGrid();
+
+    this.recordClearGoals(cluster);
 
     const bonus = this.scoring.recordClear();
     this.scoreDisplay.setScore(this.scoring.score);
@@ -720,6 +799,8 @@ export class GameScene extends Phaser.Scene {
     this.lastTap = null;
     this.selected = null;
     this.snapAllTilesToGrid();
+
+    this.recordClearGoals(cluster);
 
     const color = this.grid.getCell(col, row);
     const bonus = this.scoring.recordWildcardRewardClear(cluster.length);
@@ -774,13 +855,27 @@ export class GameScene extends Phaser.Scene {
     if (this.pendingWildcardSpawn && this.wildcardRewardAnchor) {
       this.pendingWildcardSpawn = false;
       const { col, row } = this.wildcardRewardAnchor;
-      if (this.grid.spawnWildcardBonusAt(col, row)) {
+      const disguise = this.wildcardRewardColor ?? randomMainSecondary();
+      this.wildcardRewardColor = null;
+      if (
+        this.grid.canSpawnSealedWildcard() &&
+        !this.grid.isWildcardBonus(col, row) &&
+        this.grid.spawnWildcardBonusAt(col, row, disguise)
+      ) {
+        this.runStats.recordWildcardCreated();
         announce('Wildcard bonus appeared! Tap it for 9 grouped secondary tiles.', true);
         this.refreshGrid();
       }
     }
 
-    if (this.grid.isGameOver()) this.endGame('Grid full!');
+    if (this.grid.isGameOver()) {
+      this.endGame('Grid full!');
+      return;
+    }
+
+    if (this.previewRow.isAllComplete()) {
+      this.endGame('All objectives complete!');
+    }
   }
 
   private playClusterExplode(cluster: Position[], onComplete: () => void): void {
@@ -906,12 +1001,8 @@ export class GameScene extends Phaser.Scene {
 
     const goalCompleted = this.previewRow.onMergeResult(result);
     if (goalCompleted) {
-      if (this.previewRow.isAllComplete()) {
-        announce('All objectives complete!', true);
-      } else {
-        const next = this.previewRow.getCurrentGoal();
-        if (next) announce(`Goal complete! Next: ${next}.`);
-      }
+      const next = this.previewRow.getCurrentGoal();
+      if (next) announce(`Goal complete! Next: ${next}.`);
     }
 
     announceMerge(result, this.scoring.score);
@@ -944,9 +1035,7 @@ export class GameScene extends Phaser.Scene {
       this.refreshGrid();
       this.busy = false;
 
-      if (this.previewRow.isAllComplete()) {
-        this.endGame('All objectives complete!');
-      } else if (this.grid.isGameOver()) {
+      if (this.grid.isGameOver()) {
         this.endGame('Grid full!');
       }
     });
@@ -985,11 +1074,12 @@ export class GameScene extends Phaser.Scene {
     this.busy = true;
     this.scoring.resetCombo();
     this.selected = null;
+    this.pendingWildcardSpawn = false;
     this.wildcardRewardAnchor = null;
+    this.wildcardRewardColor = null;
     this.header.setShakeUses(this.shake.usesRemaining);
-    this.previewRow.reset();
-    this.grid.clearAndRefill();
-    announce('Board reset.');
+    this.grid.shuffleTiles();
+    announce('Board shuffled.');
 
     const duration = this.contrast.isReducedMotion() ? 50 : 350;
     this.time.delayedCall(duration, () => {
@@ -1078,16 +1168,18 @@ export class GameScene extends Phaser.Scene {
 
     const { width, height } = this.scale;
     this.add
-      .rectangle(width / 2, height / 2, width * 0.85, 300, 0x1a0a2e, 0.95)
+      .rectangle(width / 2, height / 2, width * 0.85, 340, 0x1a0a2e, 0.95)
       .setStrokeStyle(2, 0xff00ff)
       .setDepth(60);
 
     const recordText = isNewRecord ? '\n★ NEW RECORD ★' : '';
+    const chainLabel =
+      this.runStats.bestWildcardChainWaves === 1 ? 'wave' : 'waves';
     this.add
       .text(
         width / 2,
-        height / 2 - 40,
-        `${reason}\n\nSCORE: ${String(this.scoring.score).padStart(8, '0')}\nMerges: ${this.scoring.mergeCount}\nTime bonus: +${timeBonus}${recordText}`,
+        height / 2 - 50,
+        `${reason}\n\nSCORE: ${String(this.scoring.score).padStart(8, '0')}\nBest chain: ${this.runStats.bestWildcardChainWaves} ${chainLabel}\nWildcards earned: ${this.runStats.wildcardsCreated}\nBest ★ clear: ${this.runStats.bestClearForWildcard} tiles\nTime bonus: +${timeBonus}${recordText}`,
         {
           fontFamily: 'monospace',
           fontSize: '16px',
@@ -1099,7 +1191,7 @@ export class GameScene extends Phaser.Scene {
       .setDepth(61);
 
     const replay = this.add
-      .text(width / 2, height / 2 + 90, '[ REPLAY ]', {
+      .text(width / 2, height / 2 + 100, '[ REPLAY ]', {
         fontFamily: 'monospace',
         fontSize: '18px',
         color: '#00ffff',
@@ -1109,7 +1201,7 @@ export class GameScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true });
 
     const menu = this.add
-      .text(width / 2, height / 2 + 130, '[ MENU ]', {
+      .text(width / 2, height / 2 + 140, '[ MENU ]', {
         fontFamily: 'monospace',
         fontSize: '18px',
         color: '#ff00ff',

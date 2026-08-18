@@ -12,17 +12,11 @@ export function pickWildcardRewardColor(): TileColor {
   return randomMainSecondary();
 }
 
-export function shouldSpawnWildcard(currentWildcardCount: number): boolean {
-  if (currentWildcardCount >= CONFIG.WILDCARD_MAX_ON_BOARD) return false;
-  return Math.random() < CONFIG.WILDCARD_SPAWN_RATE;
+export function canSpawnSealedWildcard(onBoardCount: number): boolean {
+  return onBoardCount < CONFIG.WILDCARD_MAX_PER_GAME;
 }
 
-export function countWildcards(board: (TileColor | null)[][]): number {
-  let count = 0;
-  for (const row of board) {
-    for (const cell of row) {
-      if (cell === 'wildcard') count++;
-    }
-  }
-  return count;
+export function shouldSpawnWildcard(onBoardCount: number): boolean {
+  if (!canSpawnSealedWildcard(onBoardCount)) return false;
+  return Math.random() < CONFIG.WILDCARD_SPAWN_RATE;
 }

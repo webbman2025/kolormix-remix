@@ -2,6 +2,11 @@ import { COLOR_GOALS, type MainSecondaryGoal } from '../config';
 import type { TileColor } from '../types';
 
 const MAIN_SECONDARIES: MainSecondaryGoal[] = ['green', 'purple', 'orange'];
+const MAIN_SECONDARY_SET = new Set<MainSecondaryGoal>(MAIN_SECONDARIES);
+
+export function isMainSecondaryGoal(color: TileColor): color is MainSecondaryGoal {
+  return MAIN_SECONDARY_SET.has(color as MainSecondaryGoal);
+}
 
 function shuffle<T>(items: T[]): T[] {
   const arr = [...items];
@@ -46,17 +51,28 @@ export class SecondaryGoalQueue {
     return this.remaining[color];
   }
 
+  /** True when all clear counters (top-right) have reached zero. */
   isComplete(): boolean {
-    return this.queue.length === 0;
+    return MAIN_SECONDARIES.every((color) => this.remaining[color] === 0);
   }
 
-  /** Advance queue when player creates the current secondary target. */
+  /** Advance the mix preview queue when the player creates the current target. */
   tryComplete(result: TileColor): boolean {
     const current = this.queue[0];
     if (!current || result !== current) return false;
     this.queue.shift();
-    this.remaining[current] = Math.max(0, this.remaining[current] - 1);
     return true;
+  }
+
+  /** Deduct cleared main-secondary tiles from the top-right counters only. */
+  recordClear(color: TileColor, count: number): number {
+    if (!isMainSecondaryGoal(color) || count <= 0) return 0;
+
+    const deduct = Math.min(count, this.remaining[color]);
+    if (deduct <= 0) return 0;
+
+    this.remaining[color] -= deduct;
+    return deduct;
   }
 
   reset(): void {

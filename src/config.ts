@@ -17,7 +17,8 @@ export const CONFIG = {
   SECONDARY_CLEAR_MIN: 3,
   SHAKE_MAX_USES: 3,
   WILDCARD_SPAWN_RATE: 0.05,
-  WILDCARD_MAX_ON_BOARD: 2,
+  /** Max sealed wildcard (★) tiles allowed on the board at once. */
+  WILDCARD_MAX_PER_GAME: 5,
   SCORE_MERGE: 10,
   SCORE_COMBO_BONUS: 50,
   SCORE_TIME_MULTIPLIER: 2,
@@ -37,7 +38,7 @@ export const CONFIG = {
 
 export type GameMode = 'classic' | 'timed' | 'trial';
 
-/** Main secondary objectives — mix each this many times to win. */
+/** Main secondary objectives — clear this many tiles of each color to win. */
 export const COLOR_GOALS = {
   green: 25,
   purple: 25,

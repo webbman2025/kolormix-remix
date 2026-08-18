@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { Grid } from '../src/game/Grid';
 import { Shake } from '../src/game/Shake';
 import { CONFIG } from '../src/config';
+import { SPAWN_COLORS } from '../src/game/ColorMixer';
 import { pickWildcardRewardColor } from '../src/game/Wildcard';
 
 describe('Grid', () => {
@@ -19,15 +20,52 @@ describe('Grid', () => {
     expect(grid.isAdjacent({ col: 0, row: 0 }, { col: 2, row: 2 })).toBe(false);
   });
 
-  it('fills all cells on init with starter primaries only', () => {
+  it('fills all cells on init with evenly balanced starter primaries', () => {
     const grid = new Grid();
     expect(grid.isFull()).toBe(true);
+    const counts = { red: 0, blue: 0, yellow: 0 };
     for (let row = 0; row < grid.rows; row++) {
       for (let col = 0; col < grid.cols; col++) {
         const color = grid.getCell(col, row);
         expect(['red', 'blue', 'yellow']).toContain(color);
+        counts[color as 'red' | 'blue' | 'yellow']++;
       }
     }
+    const totalCells = grid.cols * grid.rows;
+    const expectedEach = totalCells / SPAWN_COLORS.length;
+    expect(counts.red).toBe(expectedEach);
+    expect(counts.blue).toBe(expectedEach);
+    expect(counts.yellow).toBe(expectedEach);
+  });
+
+  it('shuffleTiles preserves every tile type and wildcard state', () => {
+    const grid = new Grid();
+    grid.cells[0][0] = 'purple';
+    grid.cells[0][1] = 'green';
+    grid.cells[0][2] = 'orange';
+    grid.setWildcardBonus(1, 0, 'purple');
+    grid.setWildcardBonus(4, 4, 'green');
+    grid.activateWildcardBonusChain({ col: 4, row: 4 }, { col: 4, row: 4 });
+
+    const snapshot = () => {
+      const colors: string[] = [];
+      let wildcardBonuses = 0;
+      let wildcardRewards = 0;
+      for (let row = 0; row < grid.rows; row++) {
+        for (let col = 0; col < grid.cols; col++) {
+          const color = grid.getCell(col, row);
+          if (color) colors.push(color);
+          if (grid.isWildcardBonus(col, row)) wildcardBonuses++;
+          if (grid.isWildcardReward(col, row)) wildcardRewards++;
+        }
+      }
+      colors.sort();
+      return JSON.stringify({ colors, wildcardBonuses, wildcardRewards });
+    };
+
+    const before = snapshot();
+    grid.shuffleTiles();
+    expect(snapshot()).toBe(before);
   });
 
   it('merge turns both primaries into secondary', () => {
@@ -189,7 +227,7 @@ describe('Grid', () => {
     expect(found).toBe(true);
   });
 
-  it('returns a 3x3 block of nine cells centered on the anchor', () => {
+  it('returns nine in-bounds cells for a centered 3x3', () => {
     const grid = new Grid();
     const block = grid.getGrouped3x3({ col: 3, row: 4 });
     expect(block).toHaveLength(9);
@@ -197,36 +235,109 @@ describe('Grid', () => {
     expect(block).toContainEqual({ col: 4, row: 5 });
   });
 
+  it('clips a 3x3 burst on the left edge to in-bounds cells only', () => {
+    const grid = new Grid();
+    const block = grid.getGrouped3x3({ col: 0, row: 3 });
+    expect(block).toHaveLength(6);
+    expect(block.every((p) => p.col >= 0 && p.col < grid.cols)).toBe(true);
+    expect(block).toContainEqual({ col: 0, row: 3 });
+    expect(block).not.toContainEqual({ col: -1, row: 3 });
+  });
+
+  it('clips a corner wildcard burst to four cells', () => {
+    const grid = new Grid();
+    expect(grid.getGrouped3x3({ col: 0, row: 0 })).toHaveLength(4);
+  });
+
+  it('bursts fewer tiles when the wildcard sits on the board edge', () => {
+    const grid = new Grid();
+    grid.cells = Array.from({ length: 8 }, () => Array.from({ length: 6 }, () => 'red'));
+    grid.setWildcardBonus(0, 3, 'purple');
+
+    const waves = grid.activateWildcardBonusChain({ col: 0, row: 3 }, { col: 0, row: 3 });
+    expect(waves[0]).toHaveLength(6);
+    expect(waves[0].every((s) => s.color === 'purple')).toBe(true);
+    expect(grid.getCell(0, 3)).toBe('purple');
+    expect(grid.getCell(1, 3)).toBe('purple');
+  });
+
   it('activates wildcard into 9 same-color secondaries grouped at the clear anchor', () => {
     const grid = new Grid();
     grid.cells = Array.from({ length: 8 }, () => Array.from({ length: 6 }, () => 'red'));
     grid.setWildcardBonus(2, 3, 'purple');
 
-    const spawns = grid.activateWildcardBonus({ col: 2, row: 3 });
+    const waves = grid.activateWildcardBonusChain({ col: 2, row: 3 }, { col: 2, row: 3 });
+    expect(waves).toHaveLength(1);
+    const spawns = waves[0];
     expect(spawns.length).toBe(CONFIG.WILDCARD_BANK_SIZE);
-    const color = spawns[0].color;
-    expect(spawns.every((s) => s.color === color)).toBe(true);
-    expect(['purple', 'green', 'orange']).toContain(color);
+    expect(spawns.every((s) => s.color === 'purple')).toBe(true);
     expect(grid.isWildcardBonus(2, 3)).toBe(false);
-    expect(grid.getCell(2, 3)).toBe(color);
-    expect(grid.getCell(3, 4)).toBe(color);
-    expect(grid.getCell(1, 2)).toBe(color);
+    expect(grid.getCell(2, 3)).toBe('purple');
+    expect(grid.getCell(3, 4)).toBe('purple');
+    expect(grid.getCell(1, 2)).toBe('purple');
+  });
+
+  it('chains a second wildcard caught in the first burst', () => {
+    const grid = new Grid();
+    grid.cells = Array.from({ length: 8 }, () => Array.from({ length: 6 }, () => 'red'));
+    grid.setWildcardBonus(2, 3, 'purple');
+    grid.setWildcardBonus(3, 3, 'green');
+
+    const waves = grid.activateWildcardBonusChain({ col: 2, row: 3 }, { col: 2, row: 3 });
+    expect(waves).toHaveLength(2);
+    expect(waves[0]).toHaveLength(8);
+    expect(waves[0].every((s) => s.color === 'purple')).toBe(true);
+    expect(waves[1]).toHaveLength(9);
+    expect(waves[1].every((s) => s.color === 'green')).toBe(true);
+
+    expect(grid.isWildcardBonus(2, 3)).toBe(false);
+    expect(grid.isWildcardBonus(3, 3)).toBe(false);
+    expect(grid.getCell(1, 3)).toBe('purple');
+    expect(grid.getCell(2, 3)).toBe('green');
+    expect(grid.getCell(3, 3)).toBe('green');
+    expect(grid.getCell(4, 3)).toBe('green');
+  });
+
+  it('keeps the tapped burst color where simultaneous chain bursts overlap', () => {
+    const grid = new Grid();
+    grid.cells = Array.from({ length: 8 }, () => Array.from({ length: 6 }, () => 'red'));
+    grid.setWildcardBonus(3, 3, 'purple');
+    grid.setWildcardBonus(2, 2, 'green');
+    grid.setWildcardBonus(4, 4, 'orange');
+
+    grid.activateWildcardBonusChain({ col: 3, row: 3 }, { col: 3, row: 3 });
+
+    expect(grid.getCell(3, 3)).toBe('purple');
+    expect(grid.getCell(2, 2)).toBe('green');
+    expect(grid.getCell(4, 4)).toBe('orange');
+  });
+
+  it('tracks sealed wildcards on the board and caps at five', () => {
+    const grid = new Grid();
+    grid.cells = Array.from({ length: 8 }, () => Array.from({ length: 6 }, () => 'red'));
+    for (let col = 0; col < 5; col++) {
+      grid.setWildcardBonus(col, 0, 'green');
+    }
+    expect(grid.countSealedWildcards()).toBe(5);
+    expect(grid.canSpawnSealedWildcard()).toBe(false);
   });
 
   it('spawns wildcard bonus at the clear tap position', () => {
     const grid = new Grid();
     grid.cells = Array.from({ length: 8 }, () => Array.from({ length: 6 }, () => 'red'));
 
-    expect(grid.spawnWildcardBonusAt(2, 4)).toBe(true);
+    expect(grid.spawnWildcardBonusAt(2, 4, 'orange')).toBe(true);
     expect(grid.isWildcardBonus(2, 4)).toBe(true);
+    expect(grid.getWildcardDisguise(2, 4)).toBe('orange');
   });
 
   it('chains wildcard reward tiles with adjacent same-color secondaries', () => {
     const grid = new Grid();
     grid.cells = Array.from({ length: 8 }, () => Array.from({ length: 6 }, () => 'red'));
     grid.setWildcardBonus(2, 3, 'green');
-    const spawns = grid.activateWildcardBonus({ col: 2, row: 3 });
-    const color = spawns[0].color;
+    const waves = grid.activateWildcardBonusChain({ col: 2, row: 3 }, { col: 2, row: 3 });
+    const color = waves[0][0].color;
+    expect(color).toBe('green');
 
     grid.cells[3][0] = color;
 

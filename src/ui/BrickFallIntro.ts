@@ -46,26 +46,16 @@ export class BrickFallIntro {
     this.ui.push(shade);
 
     const title = this.scene.add
-      .text(width / 2, height * 0.42, 'TAP TO START', {
+      .text(width / 2, height * 0.45, 'TAP TO START', {
         fontFamily: 'Arial Black, Impact, sans-serif',
-        fontSize: `${Math.round(28 * uiScale)}px`,
+        fontSize: `${Math.round(36 * uiScale)}px`,
         color: '#ffffff',
         stroke: '#ff00ff',
-        strokeThickness: Math.round(4 * uiScale),
+        strokeThickness: Math.round(5 * uiScale),
       })
       .setOrigin(0.5)
       .setDepth(79);
     this.ui.push(title);
-
-    const hint = this.scene.add
-      .text(width / 2, height * 0.5, 'Watch the colors fall into place', {
-        fontFamily: 'monospace',
-        fontSize: `${Math.round(12 * uiScale)}px`,
-        color: '#bf5af2',
-      })
-      .setOrigin(0.5)
-      .setDepth(79);
-    this.ui.push(hint);
 
     if (!this.config.contrast.isReducedMotion()) {
       this.scene.tweens.add({

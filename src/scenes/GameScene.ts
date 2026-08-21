@@ -98,9 +98,12 @@ export class GameScene extends Phaser.Scene {
 
   init(data: GameSceneData): void {
     this.mode = data.mode ?? 'timed';
+    this.resetSceneState();
   }
 
   create(): void {
+    this.time.paused = false;
+    this.tweens.resumeAll();
     this.layout = computeGameLayout(this.scale.width, this.scale.height);
     this.backgroundObjects = drawGameBackground(
       this,
@@ -201,6 +204,23 @@ export class GameScene extends Phaser.Scene {
     this.timer.resume();
     this.time.paused = false;
     this.tweens.resumeAll();
+  }
+
+  private resetSceneState(): void {
+    this.paused = false;
+    this.busy = false;
+    this.hiddenTabPause = false;
+    this.introPhase = 'waiting';
+    this.selected = null;
+    this.pointerStart = null;
+    this.lastTap = null;
+    this.pendingWildcardSpawn = false;
+    this.wildcardRewardAnchor = null;
+    this.wildcardRewardColor = null;
+    this.overlayGroup = [];
+    this.startIntro = null;
+    this.comboIdleTimer?.destroy();
+    this.comboIdleTimer = null;
   }
 
   private setupStartIntro(): void {

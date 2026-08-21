@@ -111,6 +111,9 @@ export class BrickFallIntro {
   }
 
   private playBrickRainIntro(): void {
+    this.scene.time.paused = false;
+    this.scene.tweens.resumeAll();
+
     const { tileSprites, getTilePosition, layout, contrast } = this.config;
     const reduced = contrast.isReducedMotion();
     const slots = shuffleSlots(

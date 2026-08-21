@@ -27,13 +27,6 @@ const config: Phaser.Types.Core.GameConfig = {
     roundPixels: true,
     powerPreference: 'low-power',
   },
-  physics: {
-    default: 'matter',
-    matter: {
-      gravity: { x: 0, y: 0 },
-      enableSleeping: true,
-    },
-  },
   scene: [BootScene, MenuScene, GameScene],
   input: {
     activePointers: 2,

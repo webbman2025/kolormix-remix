@@ -4,12 +4,15 @@ import type { Grid } from '../game/Grid';
 import type { ContrastMode } from '../accessibility/ContrastMode';
 import type { GlossyTileParts } from './GlossyTile';
 import type { GameLayout } from './GameLayout';
-import { releaseAllTilePhysics, resetTileVisualState } from './TilePhysics';
+import { resetTileVisualState } from './TilePhysics';
 
-const INTRO_GRAVITY_Y = 1.65;
-const SPAWN_STAGGER_MS = 20;
-const SETTLE_AFTER_LAST_MS = 1600;
-const SNAP_MS = 420;
+const SPAWN_STAGGER_MS = 18;
+const RAIN_DURATION_MS = 420;
+
+interface GridSlot {
+  col: number;
+  row: number;
+}
 
 interface BrickFallIntroConfig {
   layout: GameLayout;
@@ -20,13 +23,20 @@ interface BrickFallIntroConfig {
   onComplete: () => void;
 }
 
-/** Press-to-start intro: grid tiles rain in with Matter.js brick physics, then snap into place. */
+function shuffleSlots(slots: GridSlot[]): GridSlot[] {
+  const copy = [...slots];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
+/** Press-to-start intro: tiles rain into their grid slots, then gameplay begins. */
 export class BrickFallIntro {
   private scene: Phaser.Scene;
   private config: BrickFallIntroConfig;
   private ui: Phaser.GameObjects.GameObject[] = [];
-  private walls: MatterJS.BodyType[] = [];
-  private brickObjects: Phaser.GameObjects.Container[] = [];
   private started = false;
   private destroyed = false;
   private pendingTimers: Phaser.Time.TimerEvent[] = [];
@@ -74,11 +84,7 @@ export class BrickFallIntro {
       if (this.started || this.destroyed) return;
       this.started = true;
       this.clearUi();
-      if (this.config.contrast.isReducedMotion()) {
-        this.playReducedMotionIntro();
-      } else {
-        this.playPhysicsIntro();
-      }
+      this.playBrickRainIntro();
     };
 
     shade.on('pointerdown', begin);
@@ -91,8 +97,12 @@ export class BrickFallIntro {
     this.clearUi();
     this.pendingTimers.forEach((timer) => timer.destroy());
     this.pendingTimers = [];
-    this.cleanupPhysics();
-    this.scene.matter.world.pause();
+
+    for (const row of this.config.tileSprites) {
+      for (const parts of row) {
+        this.scene.tweens.killTweensOf(parts.container);
+      }
+    }
   }
 
   private clearUi(): void {
@@ -100,163 +110,55 @@ export class BrickFallIntro {
     this.ui = [];
   }
 
-  private playReducedMotionIntro(): void {
-    const { tileSprites, getTilePosition } = this.config;
-    let pending = CONFIG.GRID_ROWS * CONFIG.GRID_COLS;
+  private playBrickRainIntro(): void {
+    const { tileSprites, getTilePosition, layout, contrast } = this.config;
+    const reduced = contrast.isReducedMotion();
+    const slots = shuffleSlots(
+      Array.from({ length: CONFIG.GRID_ROWS * CONFIG.GRID_COLS }, (_, index) => ({
+        col: index % CONFIG.GRID_COLS,
+        row: Math.floor(index / CONFIG.GRID_COLS),
+      })),
+    );
 
-    for (let row = 0; row < CONFIG.GRID_ROWS; row++) {
-      for (let col = 0; col < CONFIG.GRID_COLS; col++) {
-        const parts = tileSprites[row][col];
-        const target = getTilePosition(col, row);
-        parts.container.setVisible(true);
-        parts.container.setAlpha(0);
-        parts.container.setPosition(target.x, target.y - 24);
-        parts.container.setRotation(0);
-        parts.container.setScale(1);
+    let pending = slots.length;
+    const finishSlot = () => {
+      pending--;
+      if (pending === 0) this.config.onComplete();
+    };
 
-        this.scene.tweens.add({
-          targets: parts.container,
-          alpha: 1,
-          y: target.y,
-          duration: 220,
-          delay: (row * CONFIG.GRID_COLS + col) * 18,
-          ease: 'Quad.easeOut',
-          onComplete: () => {
-            resetTileVisualState(parts, target.x, target.y, this.config.layout.tileSize);
-            pending--;
-            if (pending === 0) this.config.onComplete();
-          },
-        });
-      }
+    if (!reduced) {
+      this.scene.time.delayedCall(280, () => {
+        if (this.destroyed) return;
+        this.scene.cameras.main.shake(180, 0.005 * layout.uiScale);
+      });
     }
-  }
 
-  private playPhysicsIntro(): void {
-    const world = this.scene.matter.world;
-    world.resume();
-    world.setGravity(0, INTRO_GRAVITY_Y);
+    slots.forEach((slot, index) => {
+      const delay = reduced
+        ? (slot.row * CONFIG.GRID_COLS + slot.col) * 16
+        : index * SPAWN_STAGGER_MS;
 
-    this.createWalls();
-    this.spawnFallingBricks();
-  }
+      const timer = this.scene.time.delayedCall(delay, () => {
+        if (this.destroyed) return;
 
-  private createWalls(): void {
-    const { layout } = this.config;
-    const gridWidth =
-      CONFIG.GRID_COLS * layout.tileSize + (CONFIG.GRID_COLS - 1) * layout.tileGap;
-    const thickness = Math.max(16, Math.round(24 * layout.uiScale));
-    const wallHeight = layout.gridHeight + layout.tileSize * 3;
-    const floorY = layout.gridTop + layout.gridHeight + thickness / 2;
-
-    const left = this.scene.matter.bodies.rectangle(
-      layout.gridLeft - thickness / 2,
-      layout.gridTop + wallHeight / 2 - layout.tileSize,
-      thickness,
-      wallHeight,
-      { isStatic: true, friction: 0.95, restitution: 0.05, label: 'intro-wall' },
-    );
-
-    const right = this.scene.matter.bodies.rectangle(
-      layout.gridLeft + gridWidth + thickness / 2,
-      layout.gridTop + wallHeight / 2 - layout.tileSize,
-      thickness,
-      wallHeight,
-      { isStatic: true, friction: 0.95, restitution: 0.05, label: 'intro-wall' },
-    );
-
-    const floor = this.scene.matter.bodies.rectangle(
-      layout.gridLeft + gridWidth / 2,
-      floorY,
-      gridWidth + thickness * 2,
-      thickness,
-      { isStatic: true, friction: 0.95, restitution: 0.08, label: 'intro-floor' },
-    );
-
-    this.walls.push(left, right, floor);
-    this.scene.matter.world.add(this.walls);
-  }
-
-  private spawnFallingBricks(): void {
-    const { tileSprites, getTilePosition, layout } = this.config;
-    let spawnIndex = 0;
-    let lastDelay = 0;
-
-    for (let row = 0; row < CONFIG.GRID_ROWS; row++) {
-      for (let col = 0; col < CONFIG.GRID_COLS; col++) {
-        const delay = spawnIndex * SPAWN_STAGGER_MS;
-        lastDelay = delay;
-        spawnIndex++;
-
-        const timer = this.scene.time.delayedCall(delay, () => {
-          if (this.destroyed) return;
-
-          const parts = tileSprites[row][col];
-          const target = getTilePosition(col, row);
-          const jitterX = Phaser.Math.Between(
-            Math.round(-layout.tileSize * 0.35),
-            Math.round(layout.tileSize * 0.35),
-          );
-          const spawnY =
-            -layout.tileSize -
-            row * (layout.tileSize * 0.55) -
-            Phaser.Math.Between(40, layout.tileSize * 4);
-
-          parts.container.setVisible(true);
-          parts.container.setPosition(target.x + jitterX, spawnY);
-          parts.container.setRotation(Phaser.Math.FloatBetween(-0.35, 0.35));
-          parts.container.setScale(1);
-
-          this.scene.matter.add.gameObject(parts.container, {
-            shape: {
-              type: 'rectangle',
-              width: layout.tileSize * 0.92,
-              height: layout.tileSize * 0.92,
-              chamfer: { radius: 6 },
-            },
-            restitution: 0.12,
-            friction: 0.85,
-            frictionAir: 0.014,
-            density: 0.0018,
-            label: 'intro-brick',
-          });
-
-          const body = parts.container.body as MatterJS.BodyType | null;
-          if (body) {
-            this.brickObjects.push(parts.container);
-            this.scene.matter.body.setAngularVelocity(
-              body,
-              Phaser.Math.FloatBetween(-0.22, 0.22),
+        const parts = tileSprites[slot.row][slot.col];
+        const target = getTilePosition(slot.col, slot.row);
+        const jitterX = reduced
+          ? 0
+          : Phaser.Math.Between(
+              Math.round(-layout.tileSize * 0.28),
+              Math.round(layout.tileSize * 0.28),
             );
-            this.scene.matter.body.setVelocity(body, {
-              x: Phaser.Math.FloatBetween(-1.8, 1.8),
-              y: Phaser.Math.FloatBetween(1, 4),
-            });
-          }
-        });
-        this.pendingTimers.push(timer);
-      }
-    }
+        const startY = reduced
+          ? target.y - layout.tileSize * 0.45
+          : -layout.tileSize * 1.5 -
+            Phaser.Math.Between(20, layout.tileSize * 3 + slot.row * 18);
 
-    const settleTimer = this.scene.time.delayedCall(
-      lastDelay + SETTLE_AFTER_LAST_MS,
-      () => this.snapBricksIntoGrid(),
-    );
-    this.pendingTimers.push(settleTimer);
-  }
-
-  private snapBricksIntoGrid(): void {
-    if (this.destroyed) return;
-
-    const { tileSprites, getTilePosition, layout } = this.config;
-    this.cleanupPhysics();
-
-    let pending = CONFIG.GRID_ROWS * CONFIG.GRID_COLS;
-    for (let row = 0; row < CONFIG.GRID_ROWS; row++) {
-      for (let col = 0; col < CONFIG.GRID_COLS; col++) {
-        const parts = tileSprites[row][col];
-        const target = getTilePosition(col, row);
         this.scene.tweens.killTweensOf(parts.container);
-        resetTileVisualState(parts, parts.container.x, parts.container.y, layout.tileSize);
+        resetTileVisualState(parts, target.x + jitterX, startY, layout.tileSize);
+        if (!reduced) {
+          parts.container.setRotation(Phaser.Math.FloatBetween(-0.28, 0.28));
+        }
 
         this.scene.tweens.add({
           targets: parts.container,
@@ -265,29 +167,15 @@ export class BrickFallIntro {
           rotation: 0,
           scaleX: 1,
           scaleY: 1,
-          duration: SNAP_MS,
-          delay: (row + col) * 12,
-          ease: 'Back.easeOut',
+          duration: reduced ? 220 : RAIN_DURATION_MS + Phaser.Math.Between(0, 120),
+          ease: reduced ? 'Quad.easeOut' : 'Bounce.easeOut',
           onComplete: () => {
             resetTileVisualState(parts, target.x, target.y, layout.tileSize);
-            pending--;
-            if (pending === 0) this.config.onComplete();
+            finishSlot();
           },
         });
-      }
-    }
-  }
-
-  private cleanupPhysics(): void {
-    for (const wall of this.walls) {
-      this.scene.matter.world.remove(wall);
-    }
-    this.walls = [];
-
-    releaseAllTilePhysics(this.scene, this.config.tileSprites);
-    this.brickObjects = [];
-
-    this.scene.matter.world.setGravity(0, 0);
-    this.scene.matter.world.pause();
+      });
+      this.pendingTimers.push(timer);
+    });
   }
 }

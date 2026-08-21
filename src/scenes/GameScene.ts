@@ -37,7 +37,7 @@ import {
 } from '../ui/GlossyTile';
 import { spawnExplodeBurst, spawnMegaRewardBurst, spawnWildcardRingWave, flashWildcardReward, tweenTileExplode } from '../ui/ClearEffects';
 import { BrickFallIntro } from '../ui/BrickFallIntro';
-import { releaseAllTilePhysics, releaseMatterBody, resetTileVisualState } from '../ui/TilePhysics';
+import { resetTileVisualState } from '../ui/TilePhysics';
 import {
   getPersonalBest,
   saveScore,
@@ -129,8 +129,6 @@ export class GameScene extends Phaser.Scene {
       onExpire: () => this.endGame('Time up!'),
     });
 
-    this.matter.world.pause();
-
     this.header = new GameHeader(this, this.layout, () => this.togglePauseMenu(), () =>
       this.handleShake(),
     );
@@ -207,11 +205,12 @@ export class GameScene extends Phaser.Scene {
     this.introPhase = 'done';
     this.startIntro?.destroy();
     this.startIntro = null;
-    releaseAllTilePhysics(this, this.tileSprites);
 
     for (let row = 0; row < CONFIG.GRID_ROWS; row++) {
       for (let col = 0; col < CONFIG.GRID_COLS; col++) {
-        this.tileSprites[row][col].hitArea.setInteractive({ useHandCursor: true });
+        const parts = this.tileSprites[row][col];
+        this.tweens.killTweensOf(parts.container);
+        parts.hitArea.setInteractive({ useHandCursor: true });
       }
     }
 
@@ -270,7 +269,6 @@ export class GameScene extends Phaser.Scene {
   }
 
   private positionTile(parts: GlossyTileParts, x: number, y: number, size: number): void {
-    releaseMatterBody(this, parts.container);
     this.tweens.killTweensOf(parts.container);
     parts.container.setData('anchorX', x);
     parts.container.setData('anchorY', y);
@@ -611,7 +609,6 @@ export class GameScene extends Phaser.Scene {
       for (const wave of waves) {
         for (const spawn of wave) {
           const parts = this.tileSprites[spawn.row][spawn.col];
-          releaseMatterBody(this, parts.container);
           this.tweens.killTweensOf(parts.container);
           this.snapTileToAnchor(parts);
         }
@@ -682,26 +679,19 @@ export class GameScene extends Phaser.Scene {
     spawns.forEach((spawn, index) => {
       const parts = this.tileSprites[spawn.row][spawn.col];
       const target = this.getTilePosition(spawn.col, spawn.row);
-      releaseMatterBody(this, parts.container);
       this.tweens.killTweensOf(parts.container);
-      parts.container.setDepth(24);
-      parts.container.setAlpha(1);
-      parts.container.setRotation(0);
-      parts.container.setPosition(center.x, center.y);
-      parts.container.setScale(0.01);
+      resetTileVisualState(parts, target.x, target.y, this.layout.tileSize, 24);
+      parts.container.setScale(0.25);
 
       this.tweens.add({
         targets: parts.container,
-        x: target.x,
-        y: target.y,
         scaleX: 1,
         scaleY: 1,
         delay: index * 35,
-        duration: 460,
+        duration: 360,
         ease: 'Back.easeOut',
         onComplete: () => {
-          parts.container.setDepth(5);
-          parts.container.setScale(1);
+          resetTileVisualState(parts, target.x, target.y, this.layout.tileSize);
           done();
         },
       });

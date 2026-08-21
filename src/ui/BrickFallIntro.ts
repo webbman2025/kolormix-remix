@@ -4,7 +4,7 @@ import type { Grid } from '../game/Grid';
 import type { ContrastMode } from '../accessibility/ContrastMode';
 import type { GlossyTileParts } from './GlossyTile';
 import type { GameLayout } from './GameLayout';
-import { releaseAllTilePhysics } from './TilePhysics';
+import { releaseAllTilePhysics, resetTileVisualState } from './TilePhysics';
 
 const INTRO_GRAVITY_Y = 1.65;
 const SPAWN_STAGGER_MS = 20;
@@ -122,6 +122,7 @@ export class BrickFallIntro {
           delay: (row * CONFIG.GRID_COLS + col) * 18,
           ease: 'Quad.easeOut',
           onComplete: () => {
+            resetTileVisualState(parts, target.x, target.y, this.config.layout.tileSize);
             pending--;
             if (pending === 0) this.config.onComplete();
           },
@@ -246,7 +247,7 @@ export class BrickFallIntro {
   private snapBricksIntoGrid(): void {
     if (this.destroyed) return;
 
-    const { tileSprites, getTilePosition } = this.config;
+    const { tileSprites, getTilePosition, layout } = this.config;
     this.cleanupPhysics();
 
     let pending = CONFIG.GRID_ROWS * CONFIG.GRID_COLS;
@@ -255,17 +256,20 @@ export class BrickFallIntro {
         const parts = tileSprites[row][col];
         const target = getTilePosition(col, row);
         this.scene.tweens.killTweensOf(parts.container);
+        resetTileVisualState(parts, parts.container.x, parts.container.y, layout.tileSize);
 
         this.scene.tweens.add({
           targets: parts.container,
           x: target.x,
           y: target.y,
           rotation: 0,
+          scaleX: 1,
+          scaleY: 1,
           duration: SNAP_MS,
           delay: (row + col) * 12,
           ease: 'Back.easeOut',
           onComplete: () => {
-            parts.container.setRotation(0);
+            resetTileVisualState(parts, target.x, target.y, layout.tileSize);
             pending--;
             if (pending === 0) this.config.onComplete();
           },

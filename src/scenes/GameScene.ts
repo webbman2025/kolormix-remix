@@ -37,7 +37,7 @@ import {
 } from '../ui/GlossyTile';
 import { spawnExplodeBurst, spawnMegaRewardBurst, spawnWildcardRingWave, flashWildcardReward, tweenTileExplode } from '../ui/ClearEffects';
 import { BrickFallIntro } from '../ui/BrickFallIntro';
-import { releaseAllTilePhysics, releaseMatterBody } from '../ui/TilePhysics';
+import { releaseAllTilePhysics, releaseMatterBody, resetTileVisualState } from '../ui/TilePhysics';
 import {
   getPersonalBest,
   saveScore,
@@ -211,13 +211,11 @@ export class GameScene extends Phaser.Scene {
 
     for (let row = 0; row < CONFIG.GRID_ROWS; row++) {
       for (let col = 0; col < CONFIG.GRID_COLS; col++) {
-        const parts = this.tileSprites[row][col];
-        parts.container.setVisible(true);
-        parts.container.setAlpha(1);
-        parts.hitArea.setInteractive({ useHandCursor: true });
-        this.snapTileToAnchor(parts);
+        this.tileSprites[row][col].hitArea.setInteractive({ useHandCursor: true });
       }
     }
+
+    this.relayoutTiles();
 
     if (this.mode !== 'classic') {
       this.timer.start();
@@ -274,12 +272,9 @@ export class GameScene extends Phaser.Scene {
   private positionTile(parts: GlossyTileParts, x: number, y: number, size: number): void {
     releaseMatterBody(this, parts.container);
     this.tweens.killTweensOf(parts.container);
-    parts.container.setAlpha(1);
-    parts.container.setScale(1);
     parts.container.setData('anchorX', x);
     parts.container.setData('anchorY', y);
-    parts.container.setPosition(x, y);
-    parts.hitArea.setSize(size, size);
+    resetTileVisualState(parts, x, y, size);
   }
 
   private snapTileToAnchor(parts: GlossyTileParts): void {
@@ -287,7 +282,7 @@ export class GameScene extends Phaser.Scene {
     const y = parts.container.getData('anchorY') as number | undefined;
     if (x === undefined || y === undefined) return;
     this.tweens.killTweensOf(parts.container);
-    parts.container.setPosition(x, y);
+    resetTileVisualState(parts, x, y, this.layout.tileSize);
   }
 
   private snapAllTilesToGrid(): void {

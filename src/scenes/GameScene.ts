@@ -36,6 +36,7 @@ import {
   type GlossyTileParts,
 } from '../ui/GlossyTile';
 import { spawnExplodeBurst, spawnMegaRewardBurst, spawnWildcardRingWave, flashWildcardReward, tweenTileExplode } from '../ui/ClearEffects';
+import { BrickFallIntro } from '../ui/BrickFallIntro';
 import {
   getPersonalBest,
   saveScore,
@@ -53,6 +54,8 @@ interface PointerStart {
 interface GameSceneData {
   mode: GameMode;
 }
+
+type IntroPhase = 'waiting' | 'done';
 
 export class GameScene extends Phaser.Scene {
   private mode: GameMode = 'timed';
@@ -83,6 +86,8 @@ export class GameScene extends Phaser.Scene {
   private pendingWildcardSpawn = false;
   private wildcardRewardAnchor: Position | null = null;
   private wildcardRewardColor: TileColor | null = null;
+  private introPhase: IntroPhase = 'waiting';
+  private startIntro: BrickFallIntro | null = null;
 
   constructor() {
     super({ key: 'GameScene' });
@@ -123,7 +128,7 @@ export class GameScene extends Phaser.Scene {
       onExpire: () => this.endGame('Time up!'),
     });
 
-    if (hasTimer) this.timer.start();
+    this.matter.world.pause();
 
     this.header = new GameHeader(this, this.layout, () => this.togglePauseMenu(), () =>
       this.handleShake(),
@@ -141,9 +146,13 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.buildTileSprites();
+    this.setupStartIntro();
     this.setupPointerUp();
     setupShakeBridge(() => this.handleShake(), () =>
-      this.contrast.isShakeEnabled() && !this.busy && !this.paused,
+      this.contrast.isShakeEnabled() &&
+        this.introPhase === 'done' &&
+        !this.busy &&
+        !this.paused,
     );
 
     if (this.mode === 'trial') {
@@ -166,7 +175,53 @@ export class GameScene extends Phaser.Scene {
     this.scale.on('resize', this.handleResize, this);
     this.events.once('shutdown', () => {
       this.scale.off('resize', this.handleResize, this);
+      this.startIntro?.destroy();
+      this.startIntro = null;
     });
+  }
+
+  private setupStartIntro(): void {
+    this.introPhase = 'waiting';
+
+    for (let row = 0; row < CONFIG.GRID_ROWS; row++) {
+      for (let col = 0; col < CONFIG.GRID_COLS; col++) {
+        const parts = this.tileSprites[row][col];
+        parts.hitArea.disableInteractive();
+        parts.container.setVisible(false);
+      }
+    }
+
+    this.startIntro = new BrickFallIntro(this, {
+      layout: this.layout,
+      grid: this.grid,
+      contrast: this.contrast,
+      tileSprites: this.tileSprites,
+      getTilePosition: (col, row) => this.getTilePosition(col, row),
+      onComplete: () => this.finishStartIntro(),
+    });
+    this.startIntro.show();
+  }
+
+  private finishStartIntro(): void {
+    this.introPhase = 'done';
+    this.startIntro?.destroy();
+    this.startIntro = null;
+
+    for (let row = 0; row < CONFIG.GRID_ROWS; row++) {
+      for (let col = 0; col < CONFIG.GRID_COLS; col++) {
+        const parts = this.tileSprites[row][col];
+        parts.container.setVisible(true);
+        parts.container.setAlpha(1);
+        parts.hitArea.setInteractive({ useHandCursor: true });
+        this.snapTileToAnchor(parts);
+      }
+    }
+
+    if (this.mode !== 'classic') {
+      this.timer.start();
+    }
+
+    announce('Go!', true);
   }
 
   private handleResize(gameSize: Phaser.Structs.Size): void {
@@ -250,7 +305,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number): void {
-    if (this.paused) return;
+    if (this.introPhase !== 'done' || this.paused) return;
 
     if (this.mode !== 'classic') {
       this.timer.tick(performance.now());
@@ -281,7 +336,7 @@ export class GameScene extends Phaser.Scene {
     this.paintCell(parts, col, row);
 
     parts.hitArea.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      if (this.busy || this.paused) return;
+      if (this.introPhase !== 'done' || this.busy || this.paused) return;
       this.pointerStart = { col, row, x: pointer.x, y: pointer.y };
     });
 
@@ -318,7 +373,7 @@ export class GameScene extends Phaser.Scene {
 
   private setupPointerUp(): void {
     this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
-      if (this.busy || this.paused || !this.pointerStart) return;
+      if (this.introPhase !== 'done' || this.busy || this.paused || !this.pointerStart) return;
 
       const { col, row, x, y } = this.pointerStart;
       this.pointerStart = null;
@@ -1068,7 +1123,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private handleShake(): void {
-    if (this.busy || this.paused || !this.shake.canShake()) return;
+    if (this.introPhase !== 'done' || this.busy || this.paused || !this.shake.canShake()) return;
     if (!this.shake.use()) return;
 
     this.busy = true;
@@ -1089,6 +1144,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private togglePauseMenu(): void {
+    if (this.introPhase !== 'done') return;
     this.paused = !this.paused;
     if (this.paused) {
       this.timer.pause();

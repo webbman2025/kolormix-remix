@@ -33,12 +33,4 @@ const config: Phaser.Types.Core.GameConfig = {
   },
 };
 
-const game = new Phaser.Game(config);
-
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden) {
-    game.loop.sleep();
-  } else {
-    game.loop.wake();
-  }
-});
+new Phaser.Game(config);

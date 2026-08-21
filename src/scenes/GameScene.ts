@@ -89,6 +89,8 @@ export class GameScene extends Phaser.Scene {
   private wildcardRewardColor: TileColor | null = null;
   private introPhase: IntroPhase = 'waiting';
   private startIntro: BrickFallIntro | null = null;
+  private hiddenTabPause = false;
+  private onVisibilityChange = (): void => this.handleVisibilityChange();
 
   constructor() {
     super({ key: 'GameScene' });
@@ -172,11 +174,33 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.scale.on('resize', this.handleResize, this);
+    document.addEventListener('visibilitychange', this.onVisibilityChange);
     this.events.once('shutdown', () => {
       this.scale.off('resize', this.handleResize, this);
+      document.removeEventListener('visibilitychange', this.onVisibilityChange);
       this.startIntro?.destroy();
       this.startIntro = null;
     });
+  }
+
+  private handleVisibilityChange(): void {
+    if (this.introPhase !== 'done') return;
+
+    if (document.hidden) {
+      if (this.paused || this.hiddenTabPause) return;
+      this.hiddenTabPause = true;
+      this.timer.pause();
+      this.time.paused = true;
+      this.tweens.pauseAll();
+      return;
+    }
+
+    if (!this.hiddenTabPause) return;
+    this.hiddenTabPause = false;
+    if (this.paused) return;
+    this.timer.resume();
+    this.time.paused = false;
+    this.tweens.resumeAll();
   }
 
   private setupStartIntro(): void {
@@ -1164,28 +1188,47 @@ export class GameScene extends Phaser.Scene {
 
   private togglePauseMenu(): void {
     if (this.introPhase !== 'done') return;
-    this.paused = !this.paused;
     if (this.paused) {
-      this.timer.pause();
-      this.game.loop.sleep();
-      this.showPauseOverlay();
-    } else {
-      this.timer.resume();
-      this.game.loop.wake();
-      this.clearOverlay();
+      this.resumeFromPause();
+      return;
     }
+
+    this.paused = true;
+    this.pointerStart = null;
+    this.selected = null;
+    this.timer.pause();
+    this.time.paused = true;
+    this.tweens.pauseAll();
+    this.showPauseOverlay();
+  }
+
+  private resumeFromPause(): void {
+    if (!this.paused) return;
+    this.paused = false;
+    this.timer.resume();
+    this.time.paused = false;
+    this.tweens.resumeAll();
+    this.clearOverlay();
+    this.refreshGrid();
   }
 
   private showPauseOverlay(): void {
     const { width, height } = this.scale;
     const items = ['RESUME', 'ACCESSIBILITY', 'RESTART', 'QUIT'];
+
+    const blocker = this.add
+      .rectangle(width / 2, height / 2, width, height, 0x000000, 0.35)
+      .setDepth(49)
+      .setInteractive();
+    this.overlayGroup.push(blocker);
+
     const panel = this.add
       .rectangle(width / 2, height / 2, width * 0.8, 280, 0x1a0a2e, 0.95)
       .setStrokeStyle(2, 0xff00ff)
       .setDepth(50);
     this.overlayGroup.push(panel);
 
-    this.add
+    const title = this.add
       .text(width / 2, height / 2 - 100, 'PAUSED', {
         fontFamily: 'monospace',
         fontSize: '24px',
@@ -1193,6 +1236,7 @@ export class GameScene extends Phaser.Scene {
       })
       .setOrigin(0.5)
       .setDepth(51);
+    this.overlayGroup.push(title);
 
     items.forEach((label, i) => {
       const y = height / 2 - 40 + i * 44;
@@ -1211,7 +1255,7 @@ export class GameScene extends Phaser.Scene {
       this.overlayGroup.push(btn, txt);
 
       btn.on('pointerdown', () => {
-        if (label === 'RESUME') this.togglePauseMenu();
+        if (label === 'RESUME') this.resumeFromPause();
         else if (label === 'RESTART') this.scene.restart({ mode: this.mode });
         else if (label === 'QUIT') this.scene.start('MenuScene');
         else if (label === 'ACCESSIBILITY') {
@@ -1229,8 +1273,11 @@ export class GameScene extends Phaser.Scene {
 
   private endGame(reason: string): void {
     this.paused = true;
+    this.pointerStart = null;
+    this.selected = null;
     this.timer.pause();
-    this.game.loop.sleep();
+    this.time.paused = true;
+    this.tweens.pauseAll();
 
     let timeBonus = 0;
     if (this.mode !== 'classic') {

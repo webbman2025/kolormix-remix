@@ -4,6 +4,7 @@ import type { Grid } from '../game/Grid';
 import type { ContrastMode } from '../accessibility/ContrastMode';
 import type { GlossyTileParts } from './GlossyTile';
 import type { GameLayout } from './GameLayout';
+import { releaseAllTilePhysics } from './TilePhysics';
 
 const INTRO_GRAVITY_Y = 1.65;
 const SPAWN_STAGGER_MS = 20;
@@ -279,9 +280,7 @@ export class BrickFallIntro {
     }
     this.walls = [];
 
-    for (const container of this.brickObjects) {
-      this.scene.matter.world.remove(container);
-    }
+    releaseAllTilePhysics(this.scene, this.config.tileSprites);
     this.brickObjects = [];
 
     this.scene.matter.world.setGravity(0, 0);

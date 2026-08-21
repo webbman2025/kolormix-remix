@@ -345,6 +345,17 @@ describe('Grid', () => {
     expect(cluster.length).toBe(10);
     expect(grid.clusterHasWildcardReward(cluster)).toBe(true);
   });
+
+  it('preserves wildcard reward flags when tiles fall with gravity', () => {
+    const grid = new Grid();
+    grid.cells = Array.from({ length: 8 }, () => Array.from({ length: 6 }, () => null));
+    grid.applyWildcardWave([{ col: 2, row: 1, color: 'purple' }]);
+
+    grid.clearClusterWithGravity([{ col: 2, row: 0 }]);
+
+    expect(grid.getCell(2, 7)).toBe('purple');
+    expect(grid.isWildcardReward(2, 7)).toBe(true);
+  });
 });
 
 describe('Wildcard rewards', () => {

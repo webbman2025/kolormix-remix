@@ -37,6 +37,7 @@ import {
 } from '../ui/GlossyTile';
 import { spawnExplodeBurst, spawnMegaRewardBurst, spawnWildcardRingWave, flashWildcardReward, tweenTileExplode } from '../ui/ClearEffects';
 import { BrickFallIntro } from '../ui/BrickFallIntro';
+import { releaseAllTilePhysics, releaseMatterBody } from '../ui/TilePhysics';
 import {
   getPersonalBest,
   saveScore,
@@ -206,6 +207,7 @@ export class GameScene extends Phaser.Scene {
     this.introPhase = 'done';
     this.startIntro?.destroy();
     this.startIntro = null;
+    releaseAllTilePhysics(this, this.tileSprites);
 
     for (let row = 0; row < CONFIG.GRID_ROWS; row++) {
       for (let col = 0; col < CONFIG.GRID_COLS; col++) {
@@ -270,6 +272,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private positionTile(parts: GlossyTileParts, x: number, y: number, size: number): void {
+    releaseMatterBody(this, parts.container);
     this.tweens.killTweensOf(parts.container);
     parts.container.setAlpha(1);
     parts.container.setScale(1);
@@ -532,7 +535,10 @@ export class GameScene extends Phaser.Scene {
     const waves = this.grid.planWildcardBonusChain(anchor, { col, row });
     this.runStats.recordWildcardChain(waves.length);
     const spawns = waves.flat();
-    if (spawns.length === 0) return false;
+    if (spawns.length === 0) {
+      announce('Wildcard failed to open. Try again.', true);
+      return false;
+    }
 
     this.wildcardRewardAnchor = null;
     this.wildcardRewardColor = null;
@@ -597,10 +603,32 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      safetyTimer?.destroy();
+      onComplete();
+    };
+
+    const safetyTimer = this.time.delayedCall(6000, () => {
+      if (finished) return;
+      for (const wave of waves) {
+        for (const spawn of wave) {
+          const parts = this.tileSprites[spawn.row][spawn.col];
+          releaseMatterBody(this, parts.container);
+          this.tweens.killTweensOf(parts.container);
+          this.snapTileToAnchor(parts);
+        }
+      }
+      this.refreshGrid();
+      finish();
+    });
+
     let waveIndex = 0;
     const playNext = () => {
       if (waveIndex >= waves.length) {
-        onComplete();
+        finish();
         return;
       }
 
@@ -659,20 +687,26 @@ export class GameScene extends Phaser.Scene {
     spawns.forEach((spawn, index) => {
       const parts = this.tileSprites[spawn.row][spawn.col];
       const target = this.getTilePosition(spawn.col, spawn.row);
+      releaseMatterBody(this, parts.container);
+      this.tweens.killTweensOf(parts.container);
       parts.container.setDepth(24);
+      parts.container.setAlpha(1);
+      parts.container.setRotation(0);
       parts.container.setPosition(center.x, center.y);
-      parts.container.setScale(0);
+      parts.container.setScale(0.01);
 
       this.tweens.add({
         targets: parts.container,
         x: target.x,
         y: target.y,
-        scale: 1,
+        scaleX: 1,
+        scaleY: 1,
         delay: index * 35,
         duration: 460,
         ease: 'Back.easeOut',
         onComplete: () => {
           parts.container.setDepth(5);
+          parts.container.setScale(1);
           done();
         },
       });

@@ -558,6 +558,7 @@ export class Grid {
       const remaining: {
         color: TileColor;
         wildcard: TileColor | null;
+        reward: boolean;
         fromRow: number;
       }[] = [];
 
@@ -567,6 +568,7 @@ export class Grid {
           remaining.push({
             color,
             wildcard: this.wildcardBonus[row][col],
+            reward: this.wildcardReward[row][col],
             fromRow: row,
           });
         }
@@ -601,6 +603,7 @@ export class Grid {
       for (let i = 0; i < remaining.length; i++) {
         this.cells[spawnCount + i][col] = remaining[i].color;
         this.wildcardBonus[spawnCount + i][col] = remaining[i].wildcard;
+        this.wildcardReward[spawnCount + i][col] = remaining[i].reward;
       }
     }
 

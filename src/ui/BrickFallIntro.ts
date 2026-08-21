@@ -5,6 +5,7 @@ import type { ContrastMode } from '../accessibility/ContrastMode';
 import type { GlossyTileParts } from './GlossyTile';
 import type { GameLayout } from './GameLayout';
 import { resetTileVisualState } from './TilePhysics';
+import { playSpecularSweep, type SpecularSweepHandle } from './SpecularSweep';
 
 const SPAWN_STAGGER_MS = 18;
 const RAIN_DURATION_MS = 420;
@@ -40,7 +41,7 @@ export class BrickFallIntro {
   private started = false;
   private destroyed = false;
   private pendingTimers: Phaser.Time.TimerEvent[] = [];
-  private shineSprites: Phaser.GameObjects.Rectangle[] = [];
+  private landingSweep: SpecularSweepHandle | null = null;
 
   constructor(scene: Phaser.Scene, config: BrickFallIntroConfig) {
     this.scene = scene;
@@ -98,11 +99,8 @@ export class BrickFallIntro {
     this.clearUi();
     this.pendingTimers.forEach((timer) => timer.destroy());
     this.pendingTimers = [];
-    this.shineSprites.forEach((shine) => {
-      this.scene.tweens.killTweensOf(shine);
-      shine.destroy();
-    });
-    this.shineSprites = [];
+    this.landingSweep?.cancel();
+    this.landingSweep = null;
 
     for (const row of this.config.tileSprites) {
       for (const parts of row) {
@@ -132,7 +130,11 @@ export class BrickFallIntro {
     let pending = slots.length;
     const finishSlot = () => {
       pending--;
-      if (pending === 0) this.playLandingShine();
+      if (pending === 0) {
+        this.pendingTimers.push(
+          this.scene.time.delayedCall(90, () => this.playLandingShine()),
+        );
+      }
     };
 
     if (!reduced) {
@@ -191,47 +193,18 @@ export class BrickFallIntro {
   private playLandingShine(): void {
     if (this.destroyed) return;
 
-    const { tileSprites, layout, contrast } = this.config;
+    const { tileSprites, layout, contrast, grid } = this.config;
     if (contrast.isReducedMotion()) {
       this.config.onComplete();
       return;
     }
 
-    let remaining = CONFIG.GRID_ROWS * CONFIG.GRID_COLS;
-    const finishShine = () => {
-      remaining--;
-      if (remaining <= 0 && !this.destroyed) this.config.onComplete();
-    };
-
-    for (let row = 0; row < CONFIG.GRID_ROWS; row++) {
-      for (let col = 0; col < CONFIG.GRID_COLS; col++) {
-        const delay = (col + row) * 28;
-        const timer = this.scene.time.delayedCall(delay, () => {
-          if (this.destroyed) return;
-
-          const parts = tileSprites[row][col];
-          const size = layout.tileSize;
-          const shine = this.scene.add
-            .rectangle(-size * 0.9, 0, size * 0.22, size * 1.75, 0xffffff, 0.85)
-            .setRotation(-0.62)
-            .setBlendMode(Phaser.BlendModes.ADD);
-          parts.container.add(shine);
-          this.shineSprites.push(shine);
-
-          this.scene.tweens.add({
-            targets: shine,
-            x: size * 0.9,
-            alpha: 0,
-            duration: 420,
-            ease: 'Sine.easeOut',
-            onComplete: () => {
-              shine.destroy();
-              finishShine();
-            },
-          });
-        });
-        this.pendingTimers.push(timer);
-      }
-    }
+    this.landingSweep = playSpecularSweep(
+      this.scene,
+      { grid, tileSprites, tileSize: layout.tileSize },
+      () => {
+        if (!this.destroyed) this.config.onComplete();
+      },
+    );
   }
 }

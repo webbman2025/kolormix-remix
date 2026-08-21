@@ -37,6 +37,7 @@ import {
 } from '../ui/GlossyTile';
 import { spawnExplodeBurst, spawnMegaRewardBurst, spawnWildcardRingWave, flashWildcardReward, tweenTileExplode } from '../ui/ClearEffects';
 import { BrickFallIntro } from '../ui/BrickFallIntro';
+import { AmbientSpecularSweep } from '../ui/SpecularSweep';
 import { resetTileVisualState } from '../ui/TilePhysics';
 import {
   getPersonalBest,
@@ -89,6 +90,7 @@ export class GameScene extends Phaser.Scene {
   private wildcardRewardColor: TileColor | null = null;
   private introPhase: IntroPhase = 'waiting';
   private startIntro: BrickFallIntro | null = null;
+  private ambientSweep: AmbientSpecularSweep | null = null;
   private hiddenTabPause = false;
   private onVisibilityChange = (): void => this.handleVisibilityChange();
 
@@ -150,6 +152,20 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.buildTileSprites();
+    this.ambientSweep = new AmbientSpecularSweep(
+      this,
+      () =>
+        this.introPhase === 'done' &&
+        !this.paused &&
+        !this.busy &&
+        !this.hiddenTabPause &&
+        !this.contrast.isReducedMotion(),
+      () => ({
+        grid: this.grid,
+        tileSprites: this.tileSprites,
+        tileSize: this.layout.tileSize,
+      }),
+    );
     this.setupStartIntro();
     this.setupPointerUp();
     setupShakeBridge(() => this.handleShake(), () =>
@@ -183,6 +199,8 @@ export class GameScene extends Phaser.Scene {
       document.removeEventListener('visibilitychange', this.onVisibilityChange);
       this.startIntro?.destroy();
       this.startIntro = null;
+      this.ambientSweep?.stop();
+      this.ambientSweep = null;
     });
   }
 
@@ -192,6 +210,7 @@ export class GameScene extends Phaser.Scene {
     if (document.hidden) {
       if (this.paused || this.hiddenTabPause) return;
       this.hiddenTabPause = true;
+      this.ambientSweep?.cancelActive();
       this.timer.pause();
       this.time.paused = true;
       this.tweens.pauseAll();
@@ -265,6 +284,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     announce('Go!', true);
+    this.ambientSweep?.armAfterIntro();
   }
 
   private handleResize(gameSize: Phaser.Structs.Size): void {
@@ -1216,6 +1236,7 @@ export class GameScene extends Phaser.Scene {
     this.paused = true;
     this.pointerStart = null;
     this.selected = null;
+    this.ambientSweep?.cancelActive();
     this.timer.pause();
     this.time.paused = true;
     this.tweens.pauseAll();
@@ -1295,6 +1316,7 @@ export class GameScene extends Phaser.Scene {
     this.paused = true;
     this.pointerStart = null;
     this.selected = null;
+    this.ambientSweep?.stop();
     this.timer.pause();
     this.time.paused = true;
     this.tweens.pauseAll();
